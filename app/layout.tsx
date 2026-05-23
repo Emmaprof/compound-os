@@ -27,6 +27,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Google-Standard Mobile Clamp: Prevents UI breaking on iOS/Android */}
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
         <title>CompoundOS | Core Infrastructure</title>
+        
+        {/* GOOGLE SEARCH CONSOLE VERIFICATION */}
+        <meta name="google-site-verification" content="QVWoNo9VrJiZu7TAwmoqpV-P3HjZ0uFjmu4y58cJlVg" />
       </head>
       <body className="min-h-screen flex flex-col bg-black overflow-x-hidden selection:bg-blue-500/30">
         <WagmiProvider config={config}>

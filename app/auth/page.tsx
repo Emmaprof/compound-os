@@ -226,6 +226,18 @@ export default function AuthTerminal() {
               </button>
             </form>
 
+            {/* COMPLIANCE FOOTER */}
+            <div className="mt-8 text-center border-t border-white/5 pt-4">
+              <a 
+                href="/privacy" 
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[9px] font-mono text-neutral-600 hover:text-neutral-400 uppercase tracking-widest transition-colors"
+              >
+                Review Privacy Policy & Protocol Data Handling
+              </a>
+            </div>
+
           </div>
         </div>
       </div>
