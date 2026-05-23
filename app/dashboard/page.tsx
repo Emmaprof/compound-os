@@ -600,7 +600,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
 
       <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-transparent relative z-10 w-full">
         
-        <header className="md:hidden flex justify-between items-center px-5 py-4 border-b border-white/[0.04] bg-black/80 backdrop-blur-xl sticky top-0 z-30">
+      <header className="md:hidden flex justify-between items-center px-5 py-4 border-b border-white/[0.04] bg-black/80 backdrop-blur-xl sticky top-0 z-30">
            <div className="flex items-center gap-3">
               <div className="relative">
                  <div className="absolute inset-0 bg-blue-500/20 rounded-lg blur-md"></div>
@@ -608,10 +608,15 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
               </div>
               <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-white via-neutral-200 to-neutral-500 tracking-tight">CompoundOS</h1>
            </div>
-           <div className="flex items-center gap-3">
-              <ConnectButton chainStatus={{ smallScreen: 'full', largeScreen: 'full' }} accountStatus={{ smallScreen: 'full', largeScreen: 'full' }} showBalance={false} />
+           <div className="flex items-center gap-2">
+              <ConnectButton chainStatus={{ smallScreen: 'icon', largeScreen: 'full' }} accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }} showBalance={false} />
+              
+              {/* MOBILE SIGN OUT BUTTON */}
+              <button onClick={handleSignOut} className="text-neutral-500 hover:text-red-400 p-2 bg-white/[0.02] border border-white/10 rounded-xl transition-colors shadow-sm" title="Sign Out">
+                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+              </button>
            </div>
-        </header>
+      </header>
 
         <div className="md:hidden flex border-b border-white/[0.04] bg-black/80 backdrop-blur-xl sticky top-[65px] z-20 overflow-x-auto custom-scrollbar">
           {user?.is_admin && (
