@@ -13,7 +13,7 @@ const robotoMono = Roboto_Mono({ subsets: ['latin'], variable: '--font-roboto-mo
 
 const config = getDefaultConfig({
   appName: 'CompoundOS DePIN',
-  projectId: 'YOUR_WALLETCONNECT_PROJECT_ID', // Replace with your WalletConnect ID when ready
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID as string, 
   chains: [base],
   ssr: true, 
 });
