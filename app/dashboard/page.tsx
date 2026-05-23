@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase'; 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -23,7 +23,7 @@ const ERC20_ABI = [
 
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
 
-export default function Dashboard() {
+function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { address: userAddress, isConnected, chainId } = useAccount();
@@ -124,7 +124,7 @@ export default function Dashboard() {
         .eq('tenant_id', user.id)
         .order('created_at', { ascending: false });
 
-      let pending = [], cleared = [], allHistorical = [], roster = [], stats = { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
+      let pending: any[] = [], cleared: any[] = [], allHistorical: any[] = [], roster: any[] = [], stats = { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
       if (!invError && userInvoices) {
         pending = userInvoices.filter(inv => !inv.is_paid);
@@ -227,8 +227,7 @@ export default function Dashboard() {
       const { data: dbUser } = await supabase.from('tenants').select('*').eq('id', session.user.id).single();
       if (!activeExecution) return;
 
-      const authPhoto = session.user.user_metadata?.picture || session.user.user_metadata?.avatar_url || session.user.raw_user_metadata?.picture || session.user.raw_user_metadata?.avatar_url;
-      
+const authPhoto = session.user.user_metadata?.picture || session.user.user_metadata?.avatar_url;      
       if (dbUser && !dbUser.avatar_url && authPhoto) {
          await supabase.from('tenants').update({ avatar_url: authPhoto }).eq('id', session.user.id);
          dbUser.avatar_url = authPhoto;
@@ -258,7 +257,7 @@ export default function Dashboard() {
     if (channelRef.current) return;
 
     const websocketChannel = supabase.channel(channelName)
-      .on('postgres', { event: '*', schema: 'public', table: 'tenant_invoices' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tenant_invoices' }, () => {
         mutateDashboard(); 
       });
 
@@ -304,8 +303,7 @@ export default function Dashboard() {
     const collectionRate = allHistoricalInvoices.length > 0 ? Math.round((paid.length / allHistoricalInvoices.length) * 100) : 0;
 
     const activeAvatarsMap = new Map();
-    const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url || user?.raw_user_metadata?.picture;
-    
+    const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;    
     allHistoricalInvoices.forEach(inv => {
       const isMe = inv.tenant_id === user?.id;
       const targetAvatar = isMe ? (currentUserAuthPic || inv.tenants?.avatar_url) : inv.tenants?.avatar_url;
@@ -529,8 +527,7 @@ export default function Dashboard() {
   };
 
   const resolvedUserName = user?.user_metadata?.full_name || user?.full_name || "Compound Node";
-  const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url || user?.raw_user_metadata?.picture || user?.raw_user_metadata?.avatar_url;
-  const resolvedAvatarUrl = user?.avatar_url || authPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
+  const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;  const resolvedAvatarUrl = user?.avatar_url || authPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     e.currentTarget.src = `https://ui-avatars.com/api/?name=Node&background=111111&color=444444&bold=true`;
@@ -1334,5 +1331,18 @@ export default function Dashboard() {
         input[type="number"] { -moz-appearance: textfield; }
       `}} />
     </div>
+  );
+}
+
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-[100dvh] bg-black flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+      </div>
+    }>
+      <DashboardContent />
+    </Suspense>
   );
 }
