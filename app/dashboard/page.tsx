@@ -292,7 +292,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
         const d = new Date(); d.setMonth(d.getMonth() - i);
         return { label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0, key: '' };
       }).reverse();
-      return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
+      return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, personalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
     }
     
     const paid = allHistoricalInvoices.filter(i => i.is_paid === true || i.is_paid === 'true');
@@ -300,24 +300,27 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     const cryptoPaid = paid.filter(i => i.payment_method?.toUpperCase() === 'USDC' || i.payment_method?.includes('Vault'));
     
     const totalVolume = paid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
+    
+    // NEW: Calculate Lifetime Personal Contribution for the top-level card
+    const personalVolume = paid
+      .filter(i => i.tenant_id === user?.id)
+      .reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
+
     const collectionRate = allHistoricalInvoices.length > 0 ? Math.round((paid.length / allHistoricalInvoices.length) * 100) : 0;
 
-    // GOOGLE STANDARD FIX: Strict Active Node Filtering
     let activeAvatars: string[] = [];
     if (tenantRoster && tenantRoster.length > 0) {
        activeAvatars = tenantRoster
-         .filter(t => t.is_active === true) // Instantly strips suspended nodes
+         .filter(t => t.is_active === true) 
          .map(t => {
            const encodedName = encodeURIComponent(t.full_name || 'Node');
            return t.avatar_url || `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
          });
     } else {
-       // Fallback for Resident view if admin roster isn't loaded
        const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url; 
        if (currentUserAuthPic) activeAvatars.push(currentUserAuthPic);
     }
 
-    // GOOGLE STANDARD FIX: Dual-Layer Time Series Tracking
     const last6Months = Array.from({length: 6}, (_, i) => {
       const d = new Date(); d.setMonth(d.getMonth() - i);
       return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0 };
@@ -335,8 +338,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
          if (targetMonth) {
             const amount = Number(inv.amount_due || 0);
             targetMonth.networkTotal += amount;
-            
-            // Map personal liquidity explicitly
             if (inv.tenant_id === user?.id) {
                targetMonth.personalTotal += amount;
             }
@@ -344,13 +345,13 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
        } catch (e) { }
     });
 
-    // GOOGLE STANDARD FIX: Progressive Headroom Scaling
     const absoluteMax = Math.max(...last6Months.map(d => d.networkTotal), 1);
-    const maxMonthValue = absoluteMax * 1.2; // Injects 20% visual headroom so bars grow upward
+    const maxMonthValue = absoluteMax * 1.2; 
 
     const recentFeed = [...paid].sort((a, b) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime()).slice(0, 10); 
 
-    return { totalFiat: fiatPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
+    // NEW: Return personalVolume in the final object
+    return { totalFiat: fiatPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, personalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
   }, [allHistoricalInvoices, user, tenantRoster]);
 
   const handleGenerateBill = async () => {
@@ -807,22 +808,36 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
           )}
 
           {/* === MODULE: GOOGLE/DUNE-GRADE DATA TERMINAL === */}
+          {/* === MODULE: GOOGLE/DUNE-GRADE DATA TERMINAL === */}
           {activeWorkspace === 'ANALYTICS' && (
             <div className="space-y-6 animate-in fade-in duration-500">
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+               
+               {/* 5-COLUMN METRIC GRID */}
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
+                  
+                  {/* METRIC 1: Gross Network TVL */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                     <div className="flex justify-between items-start mb-6">
                        <div>
                            <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest">Gross Treasury TVL</h3>
-                           <p className="text-[10px] text-emerald-400 font-mono mt-1 uppercase flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Syncing Public State</p>
-                       </div>
-                       <div className="w-9 h-9 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20 group-hover:bg-blue-500/20 transition-colors shadow-[0_0_15px_rgba(59,130,246,0.1)]">
-                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                           <p className="text-[10px] text-emerald-400 font-mono mt-1 uppercase flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Network State</p>
                        </div>
                     </div>
-                    <p className="text-3xl md:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter drop-shadow-lg">₦{analytics.totalVolume.toLocaleString()}</p>
+                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter drop-shadow-lg">₦{analytics.totalVolume.toLocaleString()}</p>
                   </div>
 
+                  {/* METRIC 2: Personal Node TVL (THE NEW UPGRADE) */}
+                  <div className="bg-black/80 backdrop-blur-md border border-emerald-500/10 rounded-3xl p-5 md:p-6 shadow-[0_0_20px_rgba(16,185,129,0.05)] relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-300">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/[0.05] blur-3xl rounded-full"></div>
+                    <div className="flex justify-between items-start mb-6 relative z-10">
+                       <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,1)]"></span> Personal Contribution
+                       </h3>
+                    </div>
+                    <p className="text-3xl font-mono tabular-nums font-bold text-emerald-400 tracking-tighter relative z-10">₦{analytics.personalVolume.toLocaleString()}</p>
+                  </div>
+
+                  {/* METRIC 3: Web3 Vault */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/[0.03] blur-3xl rounded-full"></div>
                     <div className="flex justify-between items-start mb-6 relative z-10">
@@ -830,9 +845,10 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,1)]"></span> Web3 Vault
                        </h3>
                     </div>
-                    <p className="text-3xl md:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalCrypto.toLocaleString()}</p>
+                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalCrypto.toLocaleString()}</p>
                   </div>
 
+                  {/* METRIC 4: Fiat Vault */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-purple-500/30 transition-all duration-300">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/[0.03] blur-3xl rounded-full"></div>
                     <div className="flex justify-between items-start mb-6 relative z-10">
@@ -840,14 +856,13 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <span className="w-1.5 h-1.5 bg-purple-500 rounded-full shadow-[0_0_8px_rgba(168,85,247,1)]"></span> Fiat Vault
                        </h3>
                     </div>
-                    <p className="text-3xl md:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalFiat.toLocaleString()}</p>
+                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalFiat.toLocaleString()}</p>
                   </div>
 
+                  {/* METRIC 5: Network Efficiency */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-all duration-300 flex flex-col justify-between">
                      <div className="flex justify-between items-start mb-4">
                         <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest">Network Efficiency</h3>
-                        
-                        {/* GOOGLE STANDARD FIX: Strict Active Node Display */}
                         <div className="flex -space-x-2 overflow-hidden px-2">
                            {analytics.activeAvatars.slice(0, 5).map((url, idx) => (
                              <img key={idx} src={url} alt="Node" className="w-6 h-6 rounded-full border-2 border-black object-cover relative z-10" onError={handleImageError} />
@@ -860,7 +875,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                         </div>
                      </div>
                      <div className="flex items-end justify-between mt-4">
-                        <p className="text-3xl md:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter">{analytics.collectionRate}%</p>
+                        <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter">{analytics.collectionRate}%</p>
                         <div className="w-20 h-1.5 bg-white/[0.05] rounded-full overflow-hidden mb-2">
                            <div style={{ width: `${analytics.collectionRate}%` }} className="h-full bg-white transition-all duration-1000 shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
                         </div>
@@ -869,14 +884,20 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                </div>
 
                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                 
+                 {/* GROUPED BAR CHART: Settlement Liquidity Flux */}
                  <div className="lg:col-span-8 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-8 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-colors duration-500">
                     <div className="absolute inset-0 pointer-events-none opacity-20" style={{ backgroundImage: `linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px)`, backgroundSize: '40px 40px' }}></div>
                     <div className="flex justify-between items-start mb-8 md:mb-12 relative z-10">
                        <div>
                          <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Settlement Liquidity Flux</h3>
-                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest">Network vs Personal Volume</p>
+                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest flex items-center gap-4">
+                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-[#1D9BF0]/40 rounded-full"></span> Network Total</span>
+                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full"></span> Personal Output</span>
+                         </p>
                        </div>
                     </div>
+                    
                     <div className="h-48 md:h-64 flex items-end justify-between gap-2 md:gap-6 relative z-10 border-l border-b border-white/[0.05] pl-2 pb-0 pt-4">
                        <div className="absolute inset-0 flex flex-col justify-between pointer-events-none pt-4 pb-0 pl-2">
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
@@ -884,27 +905,40 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
                        </div>
                        
-                       {/* GOOGLE STANDARD FIX: Stacked Volumetric Bar Chart */}
+                       {/* GOOGLE STANDARD FIX: Side-by-Side Grouped Volumetric Bars */}
                        {analytics.monthlyData.map((data, idx) => {
-                          const heightPct = Math.max((data.networkTotal / analytics.maxMonthValue) * 100, 2); 
-                          const personalPct = data.networkTotal > 0 ? (data.personalTotal / data.networkTotal) * 100 : 0;
+                          const networkPct = Math.max((data.networkTotal / analytics.maxMonthValue) * 100, 1); 
+                          const personalPct = data.personalTotal > 0 ? Math.max((data.personalTotal / analytics.maxMonthValue) * 100, 1) : 0;
                           const isZero = data.networkTotal === 0;
 
                           return (
-                            <div key={idx} className="flex flex-col items-center flex-1 group/bar relative h-full justify-end">
-                               <div className={`w-full max-w-[56px] transition-all duration-700 ease-out relative cursor-crosshair rounded-t-md overflow-hidden ${isZero ? 'bg-white/[0.05]' : 'bg-[#1D9BF0]/10 hover:bg-[#1D9BF0]/20 border-t border-[#1D9BF0]/30'}`} style={{ height: `${heightPct}%` }}>
+                            <div key={idx} className="flex flex-col items-center flex-1 group/month relative h-full justify-end">
+                               
+                               <div className="flex items-end justify-center gap-1 md:gap-2 w-full h-full relative z-10">
+                                  {/* Bar 1: Network Total (Muted Blue) */}
+                                  <div className={`w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md ${isZero ? 'bg-white/[0.05]' : 'bg-[#1D9BF0]/20 group-hover/month:bg-[#1D9BF0]/40'}`} style={{ height: `${networkPct}%` }}></div>
                                   
-                                  {/* Personal Liquidity Core */}
-                                  {!isZero && data.personalTotal > 0 && (
-                                     <div className="absolute bottom-0 left-0 w-full bg-[#1D9BF0] transition-all duration-700 shadow-[0_0_15px_rgba(29,155,240,0.4)]" style={{ height: `${personalPct}%` }}></div>
+                                  {/* Bar 2: Personal Output (Vibrant Emerald) */}
+                                  {!isZero && (
+                                     <div className="w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)] group-hover/month:bg-emerald-400" style={{ height: `${personalPct}%` }}></div>
                                   )}
-
-                                  {/* Enterprise Interactive Tooltip */}
-                                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/bar:opacity-100 transition-opacity bg-[#0A0A0A] border border-white/10 text-white text-[9px] md:text-[10px] font-mono p-3 rounded-xl pointer-events-none shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-20 min-w-[140px] backdrop-blur-xl">
-                                     <div className="flex justify-between gap-4 mb-2"><span className="text-neutral-500">Global</span> <span className="font-bold text-white">₦{data.networkTotal.toLocaleString()}</span></div>
-                                     <div className="flex justify-between gap-4 pt-2 border-t border-white/5"><span className="text-[#1D9BF0]">Personal</span> <span className="font-bold text-[#1D9BF0]">₦{data.personalTotal.toLocaleString()}</span></div>
-                                  </div>
                                </div>
+
+                               {/* High-Fidelity Tooltip */}
+                               {!isZero && (
+                                 <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/month:opacity-100 transition-opacity bg-[#0A0A0A] border border-white/10 text-white text-[9px] md:text-[10px] font-mono p-4 rounded-xl pointer-events-none shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-20 min-w-[170px] backdrop-blur-xl">
+                                    <div className="text-center text-neutral-500 mb-3 pb-2 border-b border-white/5 uppercase tracking-widest">{data.label} Settlement</div>
+                                    <div className="flex justify-between gap-4 mb-2">
+                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#1D9BF0]/40"></span> Network</span> 
+                                       <span className="font-bold text-white">₦{data.networkTotal.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-4">
+                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Personal</span> 
+                                       <span className="font-bold text-emerald-400">₦{data.personalTotal.toLocaleString()}</span>
+                                    </div>
+                                 </div>
+                               )}
+                               
                                <span className="text-[8px] md:text-[10px] text-neutral-500 font-mono mt-3 md:mt-4 uppercase tracking-widest">{data.label}</span>
                             </div>
                           )
@@ -912,6 +946,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                     </div>
                  </div>
 
+                 {/* LIVE PROTOCOL LOGS */}
                  <div className="lg:col-span-4 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl flex flex-col h-[350px] md:h-[410px] hover:border-white/10 transition-colors duration-500 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-full h-32 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none"></div>
                     <div className="border-b border-white/[0.06] pb-4 mb-4 shrink-0 flex justify-between items-center relative z-10">
