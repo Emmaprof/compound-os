@@ -808,14 +808,11 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
           )}
 
           {/* === MODULE: GOOGLE/DUNE-GRADE DATA TERMINAL === */}
-          {/* === MODULE: GOOGLE/DUNE-GRADE DATA TERMINAL === */}
           {activeWorkspace === 'ANALYTICS' && (
             <div className="space-y-6 animate-in fade-in duration-500">
                
-               {/* 5-COLUMN METRIC GRID */}
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 md:gap-6">
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                   
-                  {/* METRIC 1: Gross Network TVL */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                     <div className="flex justify-between items-start mb-6">
                        <div>
@@ -823,10 +820,9 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                            <p className="text-[10px] text-emerald-400 font-mono mt-1 uppercase flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> Network State</p>
                        </div>
                     </div>
-                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter drop-shadow-lg">₦{analytics.totalVolume.toLocaleString()}</p>
+                    <p className="text-3xl lg:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter drop-shadow-lg">₦{analytics.totalVolume.toLocaleString()}</p>
                   </div>
 
-                  {/* METRIC 2: Personal Node TVL (THE NEW UPGRADE) */}
                   <div className="bg-black/80 backdrop-blur-md border border-emerald-500/10 rounded-3xl p-5 md:p-6 shadow-[0_0_20px_rgba(16,185,129,0.05)] relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-300">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/[0.05] blur-3xl rounded-full"></div>
                     <div className="flex justify-between items-start mb-6 relative z-10">
@@ -834,10 +830,9 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,1)]"></span> Personal Contribution
                        </h3>
                     </div>
-                    <p className="text-3xl font-mono tabular-nums font-bold text-emerald-400 tracking-tighter relative z-10">₦{analytics.personalVolume.toLocaleString()}</p>
+                    <p className="text-3xl lg:text-4xl font-mono tabular-nums font-bold text-emerald-400 tracking-tighter relative z-10">₦{analytics.personalVolume.toLocaleString()}</p>
                   </div>
 
-                  {/* METRIC 3: Web3 Vault */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/[0.03] blur-3xl rounded-full"></div>
                     <div className="flex justify-between items-start mb-6 relative z-10">
@@ -845,10 +840,9 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shadow-[0_0_8px_rgba(59,130,246,1)]"></span> Web3 Vault
                        </h3>
                     </div>
-                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalCrypto.toLocaleString()}</p>
+                    <p className="text-3xl lg:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalCrypto.toLocaleString()}</p>
                   </div>
 
-                  {/* METRIC 4: Fiat Vault */}
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-purple-500/30 transition-all duration-300">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/[0.03] blur-3xl rounded-full"></div>
                     <div className="flex justify-between items-start mb-6 relative z-10">
@@ -856,27 +850,30 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <span className="w-1.5 h-1.5 bg-purple-500 rounded-full shadow-[0_0_8px_rgba(168,85,247,1)]"></span> Fiat Vault
                        </h3>
                     </div>
-                    <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalFiat.toLocaleString()}</p>
+                    <p className="text-3xl lg:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter relative z-10">₦{analytics.totalFiat.toLocaleString()}</p>
                   </div>
 
-                  {/* METRIC 5: Network Efficiency */}
-                  <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-all duration-300 flex flex-col justify-between">
-                     <div className="flex justify-between items-start mb-4">
-                        <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest">Network Efficiency</h3>
-                        <div className="flex -space-x-2 overflow-hidden px-2">
+                  <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative group hover:border-white/10 transition-all duration-300 flex flex-col justify-between">
+                     <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-white/[0.02] blur-3xl rounded-full"></div>
+                     </div>
+                     
+                     <div className="flex justify-between items-start mb-4 relative z-10 gap-3">
+                        <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest whitespace-nowrap">Network Effic.</h3>
+                        <div className="flex -space-x-2 shrink-0">
                            {analytics.activeAvatars.slice(0, 5).map((url, idx) => (
-                             <img key={idx} src={url} alt="Node" className="w-6 h-6 rounded-full border-2 border-black object-cover relative z-10" onError={handleImageError} />
+                             <img key={idx} src={url} alt="Node" className="w-6 h-6 md:w-7 md:h-7 rounded-full border-2 border-black object-cover relative z-10 shadow-md" onError={handleImageError} />
                            ))}
                            {analytics.activeAvatars.length > 5 && (
-                              <div className="w-6 h-6 rounded-full border-2 border-black bg-white/10 flex items-center justify-center text-[8px] font-mono text-white relative z-10">
+                              <div className="w-6 h-6 md:w-7 md:h-7 rounded-full border-2 border-black bg-neutral-800 flex items-center justify-center text-[8px] font-mono text-white relative z-10 shadow-md">
                                  +{analytics.activeAvatars.length - 5}
                               </div>
                            )}
                         </div>
                      </div>
-                     <div className="flex items-end justify-between mt-4">
-                        <p className="text-3xl font-mono tabular-nums font-bold text-white tracking-tighter">{analytics.collectionRate}%</p>
-                        <div className="w-20 h-1.5 bg-white/[0.05] rounded-full overflow-hidden mb-2">
+                     <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-4 relative z-10 gap-3">
+                        <p className="text-3xl lg:text-4xl font-mono tabular-nums font-bold text-white tracking-tighter shrink-0">{analytics.collectionRate}%</p>
+                        <div className="w-full sm:w-24 h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
                            <div style={{ width: `${analytics.collectionRate}%` }} className="h-full bg-white transition-all duration-1000 shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
                         </div>
                      </div>
@@ -885,15 +882,17 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
 
                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                  
-                 {/* GROUPED BAR CHART: Settlement Liquidity Flux */}
-                 <div className="lg:col-span-8 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-8 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-colors duration-500">
-                    <div className="absolute inset-0 pointer-events-none opacity-20" style={{ backgroundImage: `linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px)`, backgroundSize: '40px 40px' }}></div>
-                    <div className="flex justify-between items-start mb-8 md:mb-12 relative z-10">
+                 <div className="lg:col-span-8 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-8 shadow-2xl relative group hover:border-white/10 transition-colors duration-500">
+                    <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
+                       <div className="absolute inset-0 opacity-20" style={{ backgroundImage: `linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px)`, backgroundSize: '40px 40px' }}></div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 md:mb-12 relative z-10 gap-4">
                        <div>
                          <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Settlement Liquidity Flux</h3>
-                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest flex items-center gap-4">
-                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-[#1D9BF0]/40 rounded-full"></span> Network Total</span>
-                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full"></span> Personal Output</span>
+                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-2 uppercase tracking-widest flex items-center gap-4">
+                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-blue-600 rounded-full shadow-[0_0_8px_rgba(37,99,235,0.8)]"></span> Network Total</span>
+                           <span className="flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span> Personal Output</span>
                          </p>
                        </div>
                     </div>
@@ -905,35 +904,32 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
                        </div>
                        
-                       {/* GOOGLE STANDARD FIX: Side-by-Side Grouped Volumetric Bars */}
                        {analytics.monthlyData.map((data, idx) => {
                           const networkPct = Math.max((data.networkTotal / analytics.maxMonthValue) * 100, 1); 
                           const personalPct = data.personalTotal > 0 ? Math.max((data.personalTotal / analytics.maxMonthValue) * 100, 1) : 0;
                           const isZero = data.networkTotal === 0;
 
                           return (
-                            <div key={idx} className="flex flex-col items-center flex-1 group/month relative h-full justify-end">
+                            <div key={idx} tabIndex={0} className="flex flex-col items-center flex-1 group/month relative h-full justify-end cursor-pointer outline-none touch-manipulation">
                                
                                <div className="flex items-end justify-center gap-1 md:gap-2 w-full h-full relative z-10">
-                                  {/* Bar 1: Network Total (Muted Blue) */}
-                                  <div className={`w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md ${isZero ? 'bg-white/[0.05]' : 'bg-[#1D9BF0]/20 group-hover/month:bg-[#1D9BF0]/40'}`} style={{ height: `${networkPct}%` }}></div>
+                                  <div className={`w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md ${isZero ? 'bg-white/[0.05]' : 'bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.3)] group-hover/month:bg-blue-500 group-focus/month:bg-blue-500'}`} style={{ height: `${networkPct}%` }}></div>
                                   
-                                  {/* Bar 2: Personal Output (Vibrant Emerald) */}
                                   {!isZero && (
-                                     <div className="w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)] group-hover/month:bg-emerald-400" style={{ height: `${personalPct}%` }}></div>
+                                     <div className="w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)] group-hover/month:bg-emerald-400 group-focus/month:bg-emerald-400" style={{ height: `${personalPct}%` }}></div>
                                   )}
                                </div>
 
-                               {/* High-Fidelity Tooltip */}
                                {!isZero && (
-                                 <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/month:opacity-100 transition-opacity bg-[#0A0A0A] border border-white/10 text-white text-[9px] md:text-[10px] font-mono p-4 rounded-xl pointer-events-none shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-20 min-w-[170px] backdrop-blur-xl">
-                                    <div className="text-center text-neutral-500 mb-3 pb-2 border-b border-white/5 uppercase tracking-widest">{data.label} Settlement</div>
+                                 <div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 opacity-0 group-hover/month:opacity-100 group-focus/month:opacity-100 transition-all duration-200 bg-[#0A0A0A] border border-white/20 text-white text-[9px] md:text-[10px] font-mono p-4 rounded-xl pointer-events-none shadow-[0_20px_50px_rgba(0,0,0,1)] z-50 min-w-[170px] backdrop-blur-xl scale-95 group-hover/month:scale-100 group-focus/month:scale-100 origin-bottom">
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 border-[6px] border-transparent border-t-white/20"></div>
+                                    <div className="text-center text-neutral-400 mb-3 pb-2 border-b border-white/10 uppercase tracking-widest font-bold">{data.label} Settlement</div>
                                     <div className="flex justify-between gap-4 mb-2">
-                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#1D9BF0]/40"></span> Network</span> 
+                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_5px_rgba(59,130,246,0.8)]"></span> Network</span> 
                                        <span className="font-bold text-white">₦{data.networkTotal.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between gap-4">
-                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> Personal</span> 
+                                       <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.8)]"></span> Personal</span> 
                                        <span className="font-bold text-emerald-400">₦{data.personalTotal.toLocaleString()}</span>
                                     </div>
                                  </div>
@@ -946,7 +942,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                     </div>
                  </div>
 
-                 {/* LIVE PROTOCOL LOGS */}
                  <div className="lg:col-span-4 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl flex flex-col h-[350px] md:h-[410px] hover:border-white/10 transition-colors duration-500 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-full h-32 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none"></div>
                     <div className="border-b border-white/[0.06] pb-4 mb-4 shrink-0 flex justify-between items-center relative z-10">
