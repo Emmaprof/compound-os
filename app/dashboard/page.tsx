@@ -434,7 +434,12 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       setPaymentLifecycle('SUCCESS'); 
       mutateDashboard(); 
     } else {
-      showToast("Database rejected state verification.", "error");
+      // === ZERO-TRUST FIX: Catch the Postgres Unique Constraint Violation ===
+      if (error.code === '23505') { 
+        showToast("SECURITY LOCK: This transaction hash has already been claimed by another invoice.", "error");
+      } else {
+        showToast("Database rejected state verification.", "error");
+      }
       setPaymentLifecycle('IDLE');
     }
   };
@@ -1344,50 +1349,78 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                 )}
 
                 {paymentPortalMode === 'USDC' && (
-                  <div className="space-y-5 md:space-y-6 animate-in fade-in zoom-in-95">
-                    <div className="bg-black border border-white/10 p-6 md:p-8 text-center font-mono rounded-2xl md:rounded-3xl relative overflow-hidden">
-                      <div className="absolute top-0 right-0 w-24 h-24 md:w-32 md:h-32 bg-blue-500/10 blur-2xl rounded-full"></div>
-                      <span className="text-neutral-500 text-[9px] md:text-[10px] uppercase tracking-widest block mb-2 md:mb-3 relative z-10">Required Asset Volume</span>
-                      <span className="text-3xl md:text-4xl text-white font-bold tabular-nums tracking-tighter relative z-10">${(activeInvoice.amount_due / ngnToUsdRate).toFixed(2)} <span className="text-[10px] md:text-[12px] text-neutral-500 ml-1">USDC</span></span>
-                    </div>
-
-                    <div className="border border-white/10 bg-black p-6 md:p-8 space-y-4 md:space-y-5 rounded-2xl md:rounded-3xl">
-                      <div className="flex items-center gap-3 mb-2 md:mb-3">
-                        <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-blue-500/20 flex items-center justify-center text-blue-400 text-[10px] md:text-[11px] font-mono font-bold border border-blue-500/30">1</div>
-                        <h4 className="text-[10px] md:text-[11px] font-bold text-white font-mono uppercase tracking-widest">On-Chain RPC Execution</h4>
+                  <div className="space-y-6 animate-in fade-in zoom-in-95">
+                    {/* Hero Amount Card */}
+                    <div className="bg-gradient-to-b from-blue-900/20 to-[#050505] border border-blue-500/20 p-8 text-center rounded-3xl relative overflow-hidden shadow-[0_0_40px_rgba(59,130,246,0.05)]">
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 blur-3xl rounded-full pointer-events-none"></div>
+                      <span className="text-blue-400 text-[10px] font-mono uppercase tracking-widest block mb-2 relative z-10">Amount Due</span>
+                      <div className="flex items-baseline justify-center gap-1.5 relative z-10">
+                        <span className="text-4xl md:text-5xl text-white font-bold tabular-nums tracking-tighter">${(activeInvoice.amount_due / ngnToUsdRate).toFixed(2)}</span>
+                        <span className="text-sm md:text-base text-neutral-500 font-mono font-bold">USDC</span>
                       </div>
-                      {isConnected ? (
-                        <button onClick={handlePayWithConnectedWallet} className="w-full bg-white hover:bg-neutral-200 text-black py-3.5 md:py-4 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] rounded-xl">
-                          {chainId !== TARGET_CHAIN_ID ? "Re-route Network to Base Mainnet" : "Sign State Transition"}
-                        </button>
-                      ) : (
-                        <div className="pt-1 md:pt-2 flex justify-center w-full [&>div]:w-full [&_button]:w-full"><ConnectButton label="Connect Node Wallet" /></div>
-                      )}
                     </div>
 
-                    <div className="flex items-center gap-4 px-4 py-1 md:px-6 md:py-2">
-                       <div className="h-px bg-white/10 flex-1"></div>
-                       <span className="text-[8px] md:text-[9px] font-mono text-neutral-600 uppercase tracking-widest">OR</span>
-                       <div className="h-px bg-white/10 flex-1"></div>
-                    </div>
-
-                    <div className="border border-white/10 bg-black p-6 md:p-8 space-y-4 md:space-y-5 rounded-2xl md:rounded-3xl">
-                      <div className="flex items-center gap-3 mb-2 md:mb-3">
-                        <div className="w-5 h-5 md:w-6 md:h-6 rounded bg-white/10 flex items-center justify-center text-white text-[10px] md:text-[11px] font-mono font-bold">2</div>
-                        <h4 className="text-[10px] md:text-[11px] font-bold text-white font-mono uppercase tracking-widest">Asynchronous Log Matching</h4>
+                    {/* Option 1: Web3 Wallet (Primary Action) */}
+                    <div className="border border-white/10 bg-[#0A0A0A] p-6 space-y-5 rounded-3xl hover:border-white/20 transition-all duration-300 relative group">
+                      <div className="absolute inset-0 bg-gradient-to-b from-white/[0.02] to-transparent rounded-3xl pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                      <div className="flex items-center gap-3 mb-2 relative z-10">
+                        <div className="w-6 h-6 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 text-[11px] font-mono font-bold border border-blue-500/20">1</div>
+                        <div>
+                          <h4 className="text-[11px] font-bold text-white font-mono uppercase tracking-widest">Pay via Smart Contract</h4>
+                          <p className="text-[9px] text-neutral-500 font-mono mt-0.5">Recommended • Instant Settlement</p>
+                        </div>
                       </div>
                       
-                      <div className="bg-[#050505] border border-white/5 p-3 md:p-4 flex items-center justify-between gap-3 rounded-xl">
-                        <span className="text-[9px] md:text-[10px] font-mono text-neutral-400 truncate">{ADMIN_CRYPTO_WALLET}</span>
-                        <button onClick={() => copyToClipboard(ADMIN_CRYPTO_WALLET, 'wallet')} className="text-[8px] md:text-[9px] font-mono bg-white/10 hover:bg-white/20 text-white px-2.5 py-1.5 md:px-3 md:py-1.5 rounded transition-colors shrink-0">
+                      <div className="relative z-10">
+                        {isConnected ? (
+                          <button onClick={handlePayWithConnectedWallet} className="w-full bg-white hover:bg-neutral-200 text-black py-4 text-[11px] font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] rounded-xl flex items-center justify-center gap-2">
+                            {chainId !== TARGET_CHAIN_ID ? (
+                              "Switch to Base Network"
+                            ) : (
+                              <>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                Sign Transaction
+                              </>
+                            )}
+                          </button>
+                        ) : (
+                          <div className="flex justify-center w-full [&>div]:w-full [&_button]:w-full"><ConnectButton label="Connect Wallet" /></div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 px-6 py-1">
+                       <div className="h-px bg-white/5 flex-1"></div>
+                       <span className="text-[9px] font-mono text-neutral-600 uppercase tracking-widest">Or Manual Transfer</span>
+                       <div className="h-px bg-white/5 flex-1"></div>
+                    </div>
+
+                    {/* Option 2: Manual Transfer (Fallback Action) */}
+                    <div className="border border-white/5 bg-[#050505] p-6 space-y-5 rounded-3xl opacity-90 hover:opacity-100 hover:border-white/10 transition-all duration-300">
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-neutral-400 text-[11px] font-mono font-bold border border-white/10">2</div>
+                        <div>
+                          <h4 className="text-[11px] font-bold text-white font-mono uppercase tracking-widest">Verify External Payment</h4>
+                          <p className="text-[9px] text-neutral-500 font-mono mt-0.5">Send USDC to Treasury & paste receipt</p>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-[#0A0A0A] border border-white/5 p-3 flex items-center justify-between gap-3 rounded-xl focus-within:border-white/20 transition-colors">
+                        <div className="flex flex-col min-w-0">
+                           <span className="text-[8px] text-neutral-500 font-mono uppercase mb-0.5">Treasury Address (Base Network)</span>
+                           <span className="text-[10px] font-mono text-white truncate">{ADMIN_CRYPTO_WALLET}</span>
+                        </div>
+                        <button onClick={() => copyToClipboard(ADMIN_CRYPTO_WALLET, 'wallet')} className="text-[9px] font-mono font-bold uppercase bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors shrink-0">
                           {copiedField === 'wallet' ? 'Copied' : 'Copy'}
                         </button>
                       </div>
 
-                      <div className="space-y-3 md:space-y-4">
-                        <input type="text" placeholder="Paste tx hash (0x...)" value={manualTxHash} onChange={(e) => setManualTxHash(e.target.value)} className="w-full bg-[#050505] border border-white/10 p-3.5 md:p-4 font-mono text-[10px] md:text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-white transition-colors rounded-xl" />
-                        <button onClick={handleVerifyManualCrypto} disabled={!manualTxHash} className="w-full bg-transparent hover:bg-white/[0.02] border border-white/20 text-white py-3.5 md:py-4 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-widest transition-colors disabled:opacity-40 rounded-xl">
-                          Verify Telemetry Log
+                      <div className="space-y-3">
+                        <div className="relative">
+                           <input type="text" placeholder="Paste Base Tx Hash (0x...)" value={manualTxHash} onChange={(e) => setManualTxHash(e.target.value)} className="w-full bg-[#0A0A0A] border border-white/5 p-4 font-mono text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-blue-500/50 focus:bg-[#050A1A] transition-colors rounded-xl" />
+                        </div>
+                        <button onClick={handleVerifyManualCrypto} disabled={!manualTxHash} className="w-full bg-transparent hover:bg-white/[0.03] border border-white/10 hover:border-white/30 text-white py-4 text-[11px] font-mono font-bold uppercase tracking-widest transition-all disabled:opacity-30 rounded-xl">
+                          Submit Receipt
                         </button>
                       </div>
                     </div>
