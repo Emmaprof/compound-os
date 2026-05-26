@@ -374,11 +374,27 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       const invoicesToDeploy = activeTenants.map(t => ({ bill_id: masterBill.id, tenant_id: t.id, amount_due: baseSplit }));
       await supabase.from('tenant_invoices').insert(invoicesToDeploy);
 
-      fetch('/api/matrix', {
+      // === GOOGLE STANDARD FIX: Securely await the Server-Side Gateway ===
+      console.log("Routing via Next.js Secure Gateway...");
+      const response = await fetch('/api/matrix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action_type: "MATRIX_GENERATED", total_network_volume: totalAmount, invoices: activeTenants.map(t => ({ tenant_email: t.email, amount_due: baseSplit })) })
-      }).catch(() => {});
+        body: JSON.stringify({ 
+          action_type: "MATRIX_GENERATED", 
+          total_network_volume: totalAmount, 
+          invoices: activeTenants.map(t => ({ tenant_email: t.email, amount_due: baseSplit })) 
+        })
+      });
+
+      const matrixResult = await response.json();
+      
+      if (!response.ok) {
+         console.error("Matrix API Gateway Error:", matrixResult);
+         throw new Error(matrixResult.message || "Gateway rejected notification payload.");
+      }
+      
+      console.log("Matrix deployed securely via server:", matrixResult);
+      // ====================================================================
 
       showToast(`Invoices broadcasted across all nodes.`, "success");
       setBillAmount('');
