@@ -290,7 +290,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     if (!allHistoricalInvoices || allHistoricalInvoices.length === 0) {
       const emptyMonths = Array.from({length: 6}, (_, i) => {
         const d = new Date(); d.setMonth(d.getMonth() - i);
-        return { label: d.toLocaleString('default', { month: 'short' }), total: 0, key: '' };
+        return { label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0, key: '' };
       }).reverse();
       return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
     }
@@ -302,25 +302,25 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     const totalVolume = paid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
     const collectionRate = allHistoricalInvoices.length > 0 ? Math.round((paid.length / allHistoricalInvoices.length) * 100) : 0;
 
-    const activeAvatarsMap = new Map();
-    const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;    
-    allHistoricalInvoices.forEach(inv => {
-      const isMe = inv.tenant_id === user?.id;
-      const targetAvatar = isMe ? (currentUserAuthPic || inv.tenants?.avatar_url) : inv.tenants?.avatar_url;
-      
-      if (targetAvatar && !activeAvatarsMap.has(inv.tenant_id)) {
-        activeAvatarsMap.set(inv.tenant_id, targetAvatar);
-      }
-    });
-    
-    if (currentUserAuthPic && !activeAvatarsMap.has(user?.id)) {
-      activeAvatarsMap.set(user?.id, currentUserAuthPic);
+    // GOOGLE STANDARD FIX: Strict Active Node Filtering
+    let activeAvatars: string[] = [];
+    if (tenantRoster && tenantRoster.length > 0) {
+       activeAvatars = tenantRoster
+         .filter(t => t.is_active === true) // Instantly strips suspended nodes
+         .map(t => {
+           const encodedName = encodeURIComponent(t.full_name || 'Node');
+           return t.avatar_url || `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
+         });
+    } else {
+       // Fallback for Resident view if admin roster isn't loaded
+       const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url; 
+       if (currentUserAuthPic) activeAvatars.push(currentUserAuthPic);
     }
-    const activeAvatars = Array.from(activeAvatarsMap.values()).slice(0, 5);
 
+    // GOOGLE STANDARD FIX: Dual-Layer Time Series Tracking
     const last6Months = Array.from({length: 6}, (_, i) => {
       const d = new Date(); d.setMonth(d.getMonth() - i);
-      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleString('default', { month: 'short' }), total: 0 };
+      return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0 };
     }).reverse();
 
     paid.forEach(inv => {
@@ -331,15 +331,27 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
          if (isNaN(d.getTime())) return;
          const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
          const targetMonth = last6Months.find(m => m.key === key);
-         if (targetMonth) targetMonth.total += Number(inv.amount_due || 0);
+         
+         if (targetMonth) {
+            const amount = Number(inv.amount_due || 0);
+            targetMonth.networkTotal += amount;
+            
+            // Map personal liquidity explicitly
+            if (inv.tenant_id === user?.id) {
+               targetMonth.personalTotal += amount;
+            }
+         }
        } catch (e) { }
     });
 
-    const maxMonthValue = Math.max(...last6Months.map(d => d.total), 1);
+    // GOOGLE STANDARD FIX: Progressive Headroom Scaling
+    const absoluteMax = Math.max(...last6Months.map(d => d.networkTotal), 1);
+    const maxMonthValue = absoluteMax * 1.2; // Injects 20% visual headroom so bars grow upward
+
     const recentFeed = [...paid].sort((a, b) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime()).slice(0, 10); 
 
     return { totalFiat: fiatPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
-  }, [allHistoricalInvoices, user]);
+  }, [allHistoricalInvoices, user, tenantRoster]);
 
   const handleGenerateBill = async () => {
     if (!billAmount || isNaN(Number(billAmount))) return showToast("Enter a valid amount.", "error");
@@ -834,10 +846,17 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-white/10 transition-all duration-300 flex flex-col justify-between">
                      <div className="flex justify-between items-start mb-4">
                         <h3 className="text-[9px] md:text-[10px] font-mono text-neutral-500 uppercase tracking-widest">Network Efficiency</h3>
-                        <div className="flex -space-x-2">
-                           {analytics.activeAvatars.map((url, idx) => (
+                        
+                        {/* GOOGLE STANDARD FIX: Strict Active Node Display */}
+                        <div className="flex -space-x-2 overflow-hidden px-2">
+                           {analytics.activeAvatars.slice(0, 5).map((url, idx) => (
                              <img key={idx} src={url} alt="Node" className="w-6 h-6 rounded-full border-2 border-black object-cover relative z-10" onError={handleImageError} />
                            ))}
+                           {analytics.activeAvatars.length > 5 && (
+                              <div className="w-6 h-6 rounded-full border-2 border-black bg-white/10 flex items-center justify-center text-[8px] font-mono text-white relative z-10">
+                                 +{analytics.activeAvatars.length - 5}
+                              </div>
+                           )}
                         </div>
                      </div>
                      <div className="flex items-end justify-between mt-4">
@@ -855,7 +874,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                     <div className="flex justify-between items-start mb-8 md:mb-12 relative z-10">
                        <div>
                          <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">Settlement Liquidity Flux</h3>
-                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest">Trailing 6-Month Block Volume</p>
+                         <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest">Network vs Personal Volume</p>
                        </div>
                     </div>
                     <div className="h-48 md:h-64 flex items-end justify-between gap-2 md:gap-6 relative z-10 border-l border-b border-white/[0.05] pl-2 pb-0 pt-4">
@@ -864,16 +883,26 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
                        </div>
+                       
+                       {/* GOOGLE STANDARD FIX: Stacked Volumetric Bar Chart */}
                        {analytics.monthlyData.map((data, idx) => {
-                          const heightPct = Math.max((data.total / analytics.maxMonthValue) * 100, 2); 
-                          const isZero = data.total === 0;
-                          const barColor = isZero ? 'bg-white/[0.05]' : 'bg-[#1D9BF0] group-hover/bar:bg-[#71C9F8] shadow-[0_4px_20px_rgba(29,155,240,0.15)]';
+                          const heightPct = Math.max((data.networkTotal / analytics.maxMonthValue) * 100, 2); 
+                          const personalPct = data.networkTotal > 0 ? (data.personalTotal / data.networkTotal) * 100 : 0;
+                          const isZero = data.networkTotal === 0;
 
                           return (
                             <div key={idx} className="flex flex-col items-center flex-1 group/bar relative h-full justify-end">
-                               <div className={`w-full max-w-[56px] transition-all duration-500 ease-out relative cursor-crosshair rounded-t-md ${barColor}`} style={{ height: `${heightPct}%` }}>
-                                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/bar:opacity-100 transition-opacity bg-white text-black text-[9px] md:text-[10px] font-mono tabular-nums font-bold px-2 py-1 md:px-3 md:py-1.5 rounded pointer-events-none shadow-[0_10px_30px_rgba(255,255,255,0.2)] z-20 whitespace-nowrap">
-                                    ₦{data.total.toLocaleString()}
+                               <div className={`w-full max-w-[56px] transition-all duration-700 ease-out relative cursor-crosshair rounded-t-md overflow-hidden ${isZero ? 'bg-white/[0.05]' : 'bg-[#1D9BF0]/10 hover:bg-[#1D9BF0]/20 border-t border-[#1D9BF0]/30'}`} style={{ height: `${heightPct}%` }}>
+                                  
+                                  {/* Personal Liquidity Core */}
+                                  {!isZero && data.personalTotal > 0 && (
+                                     <div className="absolute bottom-0 left-0 w-full bg-[#1D9BF0] transition-all duration-700 shadow-[0_0_15px_rgba(29,155,240,0.4)]" style={{ height: `${personalPct}%` }}></div>
+                                  )}
+
+                                  {/* Enterprise Interactive Tooltip */}
+                                  <div className="absolute bottom-full mb-3 left-1/2 -translate-x-1/2 opacity-0 group-hover/bar:opacity-100 transition-opacity bg-[#0A0A0A] border border-white/10 text-white text-[9px] md:text-[10px] font-mono p-3 rounded-xl pointer-events-none shadow-[0_10px_40px_rgba(0,0,0,0.8)] z-20 min-w-[140px] backdrop-blur-xl">
+                                     <div className="flex justify-between gap-4 mb-2"><span className="text-neutral-500">Global</span> <span className="font-bold text-white">₦{data.networkTotal.toLocaleString()}</span></div>
+                                     <div className="flex justify-between gap-4 pt-2 border-t border-white/5"><span className="text-[#1D9BF0]">Personal</span> <span className="font-bold text-[#1D9BF0]">₦{data.personalTotal.toLocaleString()}</span></div>
                                   </div>
                                </div>
                                <span className="text-[8px] md:text-[10px] text-neutral-500 font-mono mt-3 md:mt-4 uppercase tracking-widest">{data.label}</span>
