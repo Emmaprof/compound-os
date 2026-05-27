@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master/specs/erc7730-v1.schema.json",
+  "context": {
+    "$id": "CompoundOSTreasury",
+    "contract": {
+      "abi": "CompoundOSTreasury.json",
+      "deployments": [
+        {
+          "chainId": 8453,
+          "address": "0x5C1b0C33ee09b17519e40ce062b1c6766501B0C3"
+        }
+      ]
+    }
+  },
+  "display": {
+    "formats": {
+      "payInvoice(bytes32,uint256)": {
+        "intent": "Pay CompoundOS Utility Bill",
+        "fields": [
+          {
+            "path": "amount",
+            "label": "USDC Amount",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" 
+            }
+          }
+        ]
+      }
+    }
+  }
+}

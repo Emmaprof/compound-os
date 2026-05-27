@@ -5,13 +5,16 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase'; 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useWriteContract, useSwitchChain, usePublicClient, useReadContract } from 'wagmi';
-import { decodeEventLog, getAddress, parseUnits } from 'viem';
+// UPGRADE: Added keccak256 and stringToHex for privacy hashing
+import { decodeEventLog, getAddress, parseUnits, keccak256, stringToHex } from 'viem';
 import { base } from 'viem/chains';
 import useSWR from 'swr';
 
+// UPGRADE: Import the exact Treasury ABI and Address we configured
+import { TREASURY_ADDRESS, TREASURY_ABI } from '../../lib/web3/contractABI';
+
 // === PRODUCTION MAINNET CONSTANTS ===
 const USDC_CONTRACT_ADDRESS = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
-const ADMIN_CRYPTO_WALLET = getAddress("0xbc1da63756fb1d71b313475f1cfefdffa2c1307d");
 const TARGET_CHAIN_ID = 8453; 
 
 const ERC20_ABI = [
@@ -67,12 +70,12 @@ function DashboardContent() {
   const [displayLimit, setDisplayLimit] = useState(8);
   const observer = useRef<IntersectionObserver | null>(null);
 
-  // MAINNET FIX: Connected to TARGET_CHAIN_ID
+  // UPGRADE: Web3 Vault now checks allowance against the TREASURY_ADDRESS
   const { data: currentAllowanceRaw, refetch: refetchAllowance } = useReadContract({
     address: USDC_CONTRACT_ADDRESS,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: userAddress ? [userAddress, ADMIN_CRYPTO_WALLET] : undefined,
+    args: userAddress ? [userAddress, TREASURY_ADDRESS] : undefined,
     query: { enabled: !!userAddress }
   });
   
@@ -301,7 +304,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     
     const totalVolume = paid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
     
-    // NEW: Calculate Lifetime Personal Contribution for the top-level card
     const personalVolume = paid
       .filter(i => i.tenant_id === user?.id)
       .reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
@@ -350,7 +352,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
 
     const recentFeed = [...paid].sort((a, b) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime()).slice(0, 10); 
 
-    // NEW: Return personalVolume in the final object
     return { totalFiat: fiatPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, personalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
   }, [allHistoricalInvoices, user, tenantRoster]);
 
@@ -374,7 +375,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       const invoicesToDeploy = activeTenants.map(t => ({ bill_id: masterBill.id, tenant_id: t.id, amount_due: baseSplit }));
       await supabase.from('tenant_invoices').insert(invoicesToDeploy);
 
-      // === GOOGLE STANDARD FIX: Securely await the Server-Side Gateway ===
       console.log("Routing via Next.js Secure Gateway...");
       const response = await fetch('/api/matrix', {
         method: 'POST',
@@ -394,7 +394,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       }
       
       console.log("Matrix deployed securely via server:", matrixResult);
-      // ====================================================================
 
       showToast(`Invoices broadcasted across all nodes.`, "success");
       setBillAmount('');
@@ -434,7 +433,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       setPaymentLifecycle('SUCCESS'); 
       mutateDashboard(); 
     } else {
-      // === ZERO-TRUST FIX: Catch the Postgres Unique Constraint Violation ===
       if (error.code === '23505') { 
         showToast("SECURITY LOCK: This transaction hash has already been claimed by another invoice.", "error");
       } else {
@@ -444,7 +442,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // MAINNET FIX: Verify Manual Crypto connected to TARGET_CHAIN_ID variables
+  // UPGRADE: Verify Manual Crypto now searches for the Secure Treasury Event
   const handleVerifyManualCrypto = async () => {
     const cleanedHash = manualTxHash.trim();
     if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) return showToast("Invalid hash format syntax.", "error");
@@ -455,21 +453,27 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       const receipt = await publicClient.getTransactionReceipt({ hash: cleanedHash as `0x${string}` });
       if (receipt.status !== 'success') throw new Error("Transaction state indicates failure on-chain.");
       
-      const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date);
-      const expectedMin = BigInt(Math.max(10000, Math.floor((dueInfo.amount / ngnToUsdRate) * 0.98 * 1000000))); 
-      
-      let validTransferFound = false;
+      const expectedHash = keccak256(stringToHex(activeInvoice.id));
+      let validPaymentFound = false;
+
       for (const log of receipt.logs) {
-        if (log.address.toLowerCase() === USDC_CONTRACT_ADDRESS.toLowerCase()) {
+        if (log.address.toLowerCase() === TREASURY_ADDRESS.toLowerCase()) {
           try {
-            const decoded = decodeEventLog({ abi: ERC20_ABI, eventName: 'Transfer', topics: log.topics, data: log.data });
-            if (decoded.args.to.toLowerCase() === ADMIN_CRYPTO_WALLET.toLowerCase() && decoded.args.value >= expectedMin) { 
-              validTransferFound = true; break; 
+            const decoded = decodeEventLog({
+              abi: TREASURY_ABI,
+              data: log.data,
+              topics: log.topics
+            });
+            // Match the exact event and verify the Zero-Knowledge hash
+            if (decoded.eventName === 'InvoicePaidManual' && decoded.args.invoiceHash === expectedHash) {
+              validPaymentFound = true;
+              break; 
             }
           } catch (_) {}
         }
       }
-      if (!validTransferFound) throw new Error("No matching USDC transaction matched treasury address.");
+
+      if (!validPaymentFound) throw new Error("No cryptographic match found in Treasury logs.");
       await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', cleanedHash);
     } catch (err: any) {
       showToast(err.shortMessage || err.message || "Failed to verify transaction.", "error");
@@ -477,18 +481,49 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // MAINNET FIX: Pay With Connected Wallet connected to TARGET_CHAIN_ID variables
+  // UPGRADE: 2-Step Execution Flow (Approve -> PayInvoice)
   const handlePayWithConnectedWallet = async () => {
     setPaymentLifecycle('PROCESSING');
     try {
-      if (chainId !== TARGET_CHAIN_ID) return await switchChainAsync({ chainId: TARGET_CHAIN_ID }).then(() => setPaymentLifecycle('IDLE'));
+      if (chainId !== TARGET_CHAIN_ID) {
+         await switchChainAsync({ chainId: TARGET_CHAIN_ID });
+      }
+      if (!publicClient) throw new Error("RPC Interface offline.");
       
       const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date);
       const cryptoValue = parseUnits(((dueInfo.amount / ngnToUsdRate).toFixed(6)), 6); 
+      const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
-      const txHash = await writeContractAsync({ 
-        address: USDC_CONTRACT_ADDRESS, abi: ERC20_ABI, functionName: 'transfer', args: [ADMIN_CRYPTO_WALLET, cryptoValue] 
+      // Step 1: Check Current Allowance against the Glass Safe
+      const currentAllowance = await publicClient.readContract({
+        address: USDC_CONTRACT_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'allowance',
+        args: [userAddress as `0x${string}`, TREASURY_ADDRESS]
       });
+
+      // Step 2: Trigger Approval if limit is insufficient
+      if (currentAllowance < cryptoValue) {
+        showToast("Step 1: Approving Treasury for secure transfer...", "info");
+        const approveHash = await writeContractAsync({
+          address: USDC_CONTRACT_ADDRESS,
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [TREASURY_ADDRESS, cryptoValue]
+        });
+        
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        showToast("Approval Confirmed. Executing Settlement...", "success");
+      }
+
+      // Step 3: Execute Secure Settlement
+      const txHash = await writeContractAsync({ 
+        address: TREASURY_ADDRESS, 
+        abi: TREASURY_ABI, 
+        functionName: 'payInvoice', 
+        args: [invoiceHash, cryptoValue] 
+      });
+
       await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', txHash);
     } catch (err: any) {
       showToast(err.shortMessage || err.message, "error");
@@ -542,13 +577,13 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // MAINNET FIX: Approve connected to TARGET_CHAIN_ID variables
+  // UPGRADE: Web3 Vault Approval is now mapped securely to TREASURY_ADDRESS
   const handleApproveAllowance = async () => {
     if (!allowanceInput || isNaN(Number(allowanceInput)) || Number(allowanceInput) <= 0) return showToast("Enter a valid USDC amount", "error");
     setIsApproving(true);
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
-      await writeContractAsync({ address: USDC_CONTRACT_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [ADMIN_CRYPTO_WALLET, parseUnits(allowanceInput, 6)] });
+      await writeContractAsync({ address: USDC_CONTRACT_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [TREASURY_ADDRESS, parseUnits(allowanceInput, 6)] });
       showToast("Web3 Vault Allowance Confirmed", "success");
       setLocalDeductions(0);
       setTimeout(() => refetchAllowance(), 4000); 
@@ -592,8 +627,8 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       <aside className="hidden md:flex flex-col w-64 border-r border-white/[0.04] bg-black/50 backdrop-blur-3xl shrink-0 z-20 relative">
         <div className="p-6 border-b border-white/[0.04] flex items-center gap-4">
           <div className="relative group">
-             <div className="absolute inset-0 bg-blue-500/20 rounded-xl blur-md group-hover:bg-blue-500/40 transition-all"></div>
-             <img src="/logo.jpg" alt="Logo" className="w-9 h-9 rounded-xl object-cover relative z-10 border border-white/10" />
+              <div className="absolute inset-0 bg-blue-500/20 rounded-xl blur-md group-hover:bg-blue-500/40 transition-all"></div>
+              <img src="/logo.jpg" alt="Logo" className="w-9 h-9 rounded-xl object-cover relative z-10 border border-white/10" />
           </div>
           <div>
             <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-white via-neutral-200 to-neutral-500 tracking-tight">CompoundOS</h1>
@@ -833,7 +868,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
             <div className="space-y-6 animate-in fade-in duration-500">
                
                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  
+                 
                   <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                     <div className="flex justify-between items-start mb-6">
                        <div>
@@ -1253,7 +1288,7 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
             </div>
 
             <button onClick={() => window.print()} className="w-full mt-8 bg-transparent hover:bg-white/[0.02] border border-white/20 text-white py-4 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
               Export PDF Statement
             </button>
           </div>
@@ -1405,12 +1440,13 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                         </div>
                       </div>
                       
+                      {/* UPGRADE: Displays the Secure Smart Contract Address */}
                       <div className="bg-[#0A0A0A] border border-white/5 p-3 flex items-center justify-between gap-3 rounded-xl focus-within:border-white/20 transition-colors">
                         <div className="flex flex-col min-w-0">
-                           <span className="text-[8px] text-neutral-500 font-mono uppercase mb-0.5">Treasury Address (Base Network)</span>
-                           <span className="text-[10px] font-mono text-white truncate">{ADMIN_CRYPTO_WALLET}</span>
+                           <span className="text-[8px] text-neutral-500 font-mono uppercase mb-0.5">Glass Safe Address (Base Network)</span>
+                           <span className="text-[10px] font-mono text-white truncate">{TREASURY_ADDRESS}</span>
                         </div>
-                        <button onClick={() => copyToClipboard(ADMIN_CRYPTO_WALLET, 'wallet')} className="text-[9px] font-mono font-bold uppercase bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors shrink-0">
+                        <button onClick={() => copyToClipboard(TREASURY_ADDRESS, 'wallet')} className="text-[9px] font-mono font-bold uppercase bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg transition-colors shrink-0">
                           {copiedField === 'wallet' ? 'Copied' : 'Copy'}
                         </button>
                       </div>
@@ -1446,7 +1482,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     </div>
   );
 }
-
 
 export default function Dashboard() {
   return (
