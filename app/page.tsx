@@ -169,7 +169,7 @@ export default function MasterLandingPage() {
                 Replaced with an <a> tag pointing to the actual contract or a placeholder.
                 A button that does nothing is a UX and accessibility violation. */}
             <a
-              href="https://basescan.org"
+              href="https://baseshttps://basescan.org/token/0x833589fcd6edb6e08f4c7c32d4f71b54bda02913?a=0x5C1b0C33ee09b17519e40ce062b1c6766501B0C3#codecan.org"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full sm:w-auto bg-transparent hover:bg-white/5 border border-white/10 text-neutral-300 hover:text-white px-8 py-4 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors flex items-center justify-center"
