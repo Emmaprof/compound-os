@@ -1,105 +1,159 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
 export default function LandingPage() {
   const router = useRouter();
+  
+  // Terminal Animation State
+  const [terminalText, setTerminalText] = useState<string[]>([
+    '> [MEM] DOM Virtualization engine idle.'
+  ]);
+  const [isInitializing, setIsInitializing] = useState(false);
+
+  useEffect(() => {
+    const sequences = [
+      '> [LEDGER] Immutable receipt confirmed on-chain.',
+      '> [NODE] DePIN infrastructure status: OPTIMAL.',
+      '> [VAULT] 0-Click relayer payload verified.',
+      '> [INDEX] Matrix synchronized across 12 active nodes.',
+      '> [RPC] Base Sepolia latency: 12ms.',
+      '> [SEC] Row Level Security policies active.'
+    ];
+    
+    let currentIndex = 0;
+    const interval = setInterval(() => {
+      if (currentIndex < sequences.length) {
+        setTerminalText(prev => {
+          const newText = [...prev, sequences[currentIndex]];
+          if (newText.length > 6) newText.shift();
+          return newText;
+        });
+        currentIndex++;
+      } else {
+        currentIndex = 0;
+      }
+    }, 2500);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleInitialize = () => {
+    setIsInitializing(true);
+    setTimeout(() => {
+      router.push('/auth');
+    }, 800);
+  };
 
   return (
-    <div className="min-h-[100dvh] bg-black text-white relative overflow-hidden font-sans selection:bg-blue-500/30">
+    <div className="min-h-[100dvh] bg-[#050505] text-white flex flex-col font-sans selection:bg-blue-500/30">
       
-      {/* Immersive Background Gradients */}
-      <div className="absolute inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] bg-blue-600/10 rounded-full blur-[150px] mix-blend-screen animate-pulse duration-10000"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] bg-emerald-600/10 rounded-full blur-[150px] mix-blend-screen"></div>
-        <div className="absolute inset-0 opacity-[0.15]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.2) 1px, transparent 0)`, backgroundSize: '40px 40px' }}></div>
-      </div>
-
-      {/* Transparent Navigation Bar */}
-      <nav className="relative z-50 flex items-center justify-between px-6 py-6 md:px-12 md:py-8">
+      {/* Navigation */}
+      <nav className="flex items-center justify-between px-6 py-5 md:px-10 border-b border-white/[0.04] bg-black/50 backdrop-blur-md relative z-50">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 p-[1px] shadow-[0_0_20px_rgba(59,130,246,0.4)]">
-            <div className="w-full h-full bg-black rounded-xl flex items-center justify-center">
-              <span className="w-2.5 h-2.5 bg-white rounded-sm shadow-[0_0_10px_rgba(255,255,255,0.8)]"></span>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 p-[1px]">
+            <div className="w-full h-full bg-black rounded-lg flex items-center justify-center">
+              <span className="w-2 h-2 bg-white rounded-sm shadow-[0_0_10px_rgba(255,255,255,0.8)]"></span>
             </div>
           </div>
-          <span className="text-lg md:text-xl font-bold tracking-tight text-white">CompoundOS</span>
+          <span className="text-lg font-bold tracking-tight text-white">CompoundOS</span>
         </div>
         
-        <div className="flex items-center gap-6">
-          <Link href="/auth" className="hidden md:block text-xs font-mono uppercase tracking-widest text-neutral-400 hover:text-white transition-colors">
-            Protocol Login
-          </Link>
-          <button 
-            onClick={() => router.push('/auth')}
-            className="bg-white hover:bg-neutral-200 text-black px-6 py-3 rounded-xl text-[10px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
-          >
-            Launch Terminal
-          </button>
-        </div>
+        <button 
+          onClick={handleInitialize}
+          className="bg-white hover:bg-neutral-200 text-black px-5 py-2.5 rounded-lg text-[10px] font-mono font-bold uppercase tracking-widest transition-colors"
+        >
+          {isInitializing ? 'INITIALIZING...' : 'ACCESS TERMINAL'}
+        </button>
       </nav>
 
-      {/* Main Hero Section */}
-      <main className="relative z-10 flex flex-col items-center justify-center min-h-[calc(100dvh-100px)] px-6 text-center max-w-5xl mx-auto">
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col lg:flex-row items-center justify-center px-6 lg:px-20 py-12 gap-12 lg:gap-20 relative z-10">
         
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-full mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>
-          <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Base L2 Mainnet Live</span>
+        {/* Left Column: Copy */}
+        <div className="flex-1 max-w-2xl">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full mb-8">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+            <span className="text-[9px] font-mono font-bold text-emerald-400 uppercase tracking-widest">Base L2 Infrastructure Live</span>
+          </div>
+
+          <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter leading-[1.05] text-white mb-6">
+            Decentralized <br />
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-blue-200 to-white">Physical</span> <br />
+            Infrastructure.
+          </h1>
+
+          <p className="text-sm md:text-base text-neutral-400 font-mono leading-relaxed mb-10 max-w-xl">
+            An elite protocol engine for residential management. True 0-click USDC relayer execution, infinite DOM virtualization, and cryptographic invariant logging. Architected for the future internet.
+          </p>
+
+          <button 
+            onClick={handleInitialize}
+            disabled={isInitializing}
+            className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-xl text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_30px_rgba(37,99,235,0.3)] flex items-center gap-3 disabled:opacity-50"
+          >
+            {isInitializing ? (
+              <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            )}
+            Initialize Node Workspace
+          </button>
         </div>
 
-        <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter leading-[1.1] text-white mb-8 animate-in fade-in slide-in-from-bottom-6 duration-700 delay-100">
-          Decentralized <br className="hidden md:block" />
-          <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-emerald-400 to-white">Residential OS.</span>
-        </h1>
-
-        <p className="text-base md:text-lg text-neutral-400 font-mono leading-relaxed max-w-2xl mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-200">
-          The autonomous settlement layer for utility management. CompoundOS leverages Web3 cryptography and automated smart contracts to secure, split, and settle residential network bills with zero friction.
-        </p>
-
-        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto animate-in fade-in slide-in-from-bottom-10 duration-700 delay-300">
-          <button 
-            onClick={() => router.push('/auth')}
-            className="w-full sm:w-auto bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-8 py-4 rounded-2xl text-[11px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] flex items-center justify-center gap-3"
-          >
-            Access Network Node
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-          </button>
+        {/* Right Column: Terminal Window */}
+        <div className="flex-1 w-full max-w-2xl relative">
+          <div className="absolute inset-0 bg-blue-500/10 blur-[100px] rounded-full pointer-events-none"></div>
           
-          <button 
-            onClick={() => window.open('https://basescan.org', '_blank')}
-            className="w-full sm:w-auto bg-transparent hover:bg-white/5 border border-white/10 text-white px-8 py-4 rounded-2xl text-[11px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-3"
-          >
-            View Smart Contract
-          </button>
-        </div>
-
-        {/* Feature Grid (Optional UI Polish) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-24 w-full max-w-4xl text-left border-t border-white/5 pt-12 animate-in fade-in duration-1000 delay-500">
-          <div>
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 mb-4 border border-blue-500/20">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <div className="bg-[#0A0A0A] border border-white/[0.05] rounded-2xl overflow-hidden shadow-2xl relative z-10 aspect-[4/3] flex flex-col">
+            <div className="bg-[#111] border-b border-white/[0.05] px-4 py-3 flex items-center gap-4">
+              <div className="flex gap-2">
+                <div className="w-3 h-3 rounded-full bg-red-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                <div className="w-3 h-3 rounded-full bg-green-500/80"></div>
+              </div>
+              <span className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest">CompoundOS System Node // TTY1</span>
             </div>
-            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Instant Settlements</h3>
-            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Cryptographic USDC routing bypasses traditional banking latency.</p>
-          </div>
-          <div>
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-4 border border-emerald-500/20">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+            
+            <div className="p-6 font-mono text-[11px] md:text-xs leading-relaxed flex-1 overflow-hidden relative">
+               <div className="absolute bottom-6 left-6 space-y-3">
+                 {terminalText.map((text, i) => (
+                   <p key={i} className={`${text.includes('receipt') ? 'text-white font-bold' : text.includes('VAULT') ? 'text-blue-400' : 'text-neutral-500'} animate-in fade-in slide-in-from-bottom-2`}>
+                     {text}
+                   </p>
+                 ))}
+                 <p className="text-emerald-500 flex items-center gap-2 mt-2">
+                   <span>&gt;</span>
+                   <span className="w-2 h-4 bg-emerald-500 animate-pulse"></span>
+                 </p>
+               </div>
             </div>
-            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Un-hackable Core</h3>
-            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Secured directly on the Base Layer 2 Ethereum Network.</p>
-          </div>
-          <div>
-            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 mb-4 border border-purple-500/20">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-            </div>
-            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Automated Matrix</h3>
-            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Dynamic load balancing and invoice deployment for all active nodes.</p>
           </div>
         </div>
 
       </main>
+
+      {/* Feature Footer */}
+      <footer className="grid grid-cols-1 md:grid-cols-3 gap-6 px-6 lg:px-20 py-10 border-t border-white/[0.04] bg-black/30 relative z-10">
+        <div className="bg-[#0A0A0A] border border-white/[0.02] p-6 rounded-2xl">
+          <h3 className="text-[11px] font-bold font-mono text-white uppercase tracking-widest mb-3">0-Click Vault Relayer</h3>
+          <p className="text-[9px] text-neutral-500 font-mono leading-relaxed">Account Abstraction architecture. Execute USDC settlements autonomously without constant wallet signature prompts.</p>
+        </div>
+        <div className="bg-[#0A0A0A] border border-white/[0.02] p-6 rounded-2xl relative overflow-hidden">
+           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 blur-3xl rounded-full"></div>
+          <h3 className="text-[11px] font-bold font-mono text-emerald-400 uppercase tracking-widest mb-3 relative z-10 flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Cryptographic Ledgers
+          </h3>
+          <p className="text-[9px] text-neutral-500 font-mono leading-relaxed relative z-10">Trustless immutability on Base L2. Every network clearance is stamped with a verifiable, immutable transaction hash.</p>
+        </div>
+        <div className="bg-[#0A0A0A] border border-white/[0.02] p-6 rounded-2xl">
+          <h3 className="text-[11px] font-bold font-mono text-white uppercase tracking-widest mb-3">Infinite Scalability</h3>
+          <p className="text-[9px] text-neutral-500 font-mono leading-relaxed">Engineered with React DOM Virtualization. Scroll through 5 years of receipt history with zero memory fragmentation.</p>
+        </div>
+      </footer>
     </div>
   );
 }
