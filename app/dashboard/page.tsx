@@ -14,6 +14,7 @@ import { TREASURY_ADDRESS, TREASURY_ABI } from '../../lib/web3/contractABI';
 // === PRODUCTION MAINNET CONSTANTS ===
 const USDC_CONTRACT_ADDRESS = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
 const TARGET_CHAIN_ID = 8453; 
+const FALLBACK_EXCHANGE_RATE = 1520;
 
 const ERC20_ABI = [
   { inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], name: "allowance", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
@@ -33,6 +34,7 @@ function DashboardContent() {
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient();
 
+  // Web3 Error Silencer
   useEffect(() => {
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       if (event.reason?.message?.includes('Connection interrupted while trying to subscribe')) {
@@ -51,7 +53,7 @@ function DashboardContent() {
   
   const [billAmount, setBillAmount] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(1520);
+  const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(FALLBACK_EXCHANGE_RATE);
 
   const [viewingReceipt, setViewingReceipt] = useState<any>(null);
   const [allowanceInput, setAllowanceInput] = useState<string>('5');
@@ -68,6 +70,9 @@ function DashboardContent() {
   const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [paymentLifecycle, setPaymentLifecycle] = useState<'IDLE' | 'PROCESSING' | 'SUCCESS'>('IDLE');
+
+  // Mathematical Safety: Guarantee rate is never zero to prevent render crashes
+  const safeUsdRate = ngnToUsdRate > 0 ? ngnToUsdRate : FALLBACK_EXCHANGE_RATE;
 
   // --- CONTRACT READS ---
   const { data: currentAllowanceRaw, refetch: refetchAllowance } = useReadContract({
@@ -100,7 +105,6 @@ function DashboardContent() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
-  // --- WITHDRAWAL EXECUTION (ALIGNED TO SMART CONTRACT) ---
   const handleExecuteWithdrawal = async () => {
     if (!withdrawDestination || !withdrawDestination.startsWith('0x') || withdrawDestination.length !== 42) {
       return showToast("Invalid cryptographic destination address.", "error");
@@ -115,7 +119,6 @@ function DashboardContent() {
       
       const cryptoAmount = parseUnits(withdrawAmountInput, 6);
       
-      // Directly maps to routeToExternal in CompoundOSTreasury
       const txHash = await writeContractAsync({
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
@@ -253,7 +256,7 @@ function DashboardContent() {
     fetch('https://open.er-api.com/v6/latest/USD')
       .then(res => res.json())
       .then(data => { if (data?.rates?.NGN) setNgnToUsdRate(data.rates.NGN); })
-      .catch(() => console.warn("Oracle baseline offline."));
+      .catch(() => console.warn("Oracle baseline offline. Operating on fallback."));
   }, []);
 
   useEffect(() => {
@@ -299,23 +302,22 @@ function DashboardContent() {
     return () => { activeExecution = false; };
   }, [searchParams]);
 
-  const channelRef = useRef<any>(null);
+  // Master Bugfix: Prevent Memory Leak in Realtime Subscriptions
   useEffect(() => {
     if (!user?.id || loading) return; 
 
     const channelName = `ledger-flux-${user.id}`;
-    if (channelRef.current) return;
-
+    
     const websocketChannel = supabase.channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tenant_invoices' }, () => {
         mutateDashboard(); 
-      });
+      })
+      .subscribe();
 
-    websocketChannel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        channelRef.current = websocketChannel;
-      }
-    });
+    // Critical Cleanup to prevent React crashing from infinite listeners
+    return () => {
+      supabase.removeChannel(websocketChannel);
+    };
   }, [user?.id, loading, mutateDashboard]);
 
   const lastElementRef = useCallback((node: HTMLDivElement | null) => {
@@ -340,7 +342,7 @@ function DashboardContent() {
     if (!allHistoricalInvoices || allHistoricalInvoices.length === 0) {
       const emptyMonths = Array.from({length: 6}, (_, i) => {
         const d = new Date(); d.setMonth(d.getMonth() - i);
-        return { label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0, key: '' };
+        return { label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0, key: `${d.getFullYear()}-${d.getMonth()}` };
       }).reverse();
       return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, personalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
     }
@@ -422,7 +424,6 @@ function DashboardContent() {
       const invoicesToDeploy = activeTenants.map(t => ({ bill_id: masterBill.id, tenant_id: t.id, amount_due: baseSplit }));
       await supabase.from('tenant_invoices').insert(invoicesToDeploy);
 
-      console.log("Routing via Next.js Secure Gateway...");
       const response = await fetch('/api/matrix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -436,12 +437,9 @@ function DashboardContent() {
       const matrixResult = await response.json();
       
       if (!response.ok) {
-         console.error("Matrix API Gateway Error:", matrixResult);
          throw new Error(matrixResult.message || "Gateway rejected notification payload.");
       }
       
-      console.log("Matrix deployed securely via server:", matrixResult);
-
       showToast(`Invoices broadcasted across all nodes.`, "success");
       setBillAmount('');
       mutateDashboard(); 
@@ -481,7 +479,7 @@ function DashboardContent() {
       mutateDashboard(); 
     } else {
       if (error.code === '23505') { 
-        showToast("SECURITY LOCK: This transaction hash has already been claimed by another invoice.", "error");
+        showToast("SECURITY LOCK: This transaction hash has already been claimed.", "error");
       } else {
         showToast("Database rejected state verification.", "error");
       }
@@ -535,7 +533,7 @@ function DashboardContent() {
       if (!publicClient) throw new Error("RPC Interface offline.");
       
       const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date);
-      const cryptoValue = parseUnits(((dueInfo.amount / ngnToUsdRate).toFixed(6)), 6); 
+      const cryptoValue = parseUnits(((dueInfo.amount / safeUsdRate).toFixed(6)), 6); 
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
       const currentAllowance = await publicClient.readContract({
@@ -597,7 +595,7 @@ function DashboardContent() {
 
     try {
         const dueStr = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
-        const exactUsdcDeduction = calculateDynamicAmount(invoice.amount_due, dueStr).amount / ngnToUsdRate;
+        const exactUsdcDeduction = calculateDynamicAmount(invoice.amount_due, dueStr).amount / safeUsdRate;
 
         const { data, error } = await supabase.functions.invoke('vault-relayer', {
             body: { invoiceId: invoice.id, userAddress: userAddress, exactUsdcAmount: exactUsdcDeduction }
@@ -898,7 +896,7 @@ function DashboardContent() {
                    )}
                 </div>
 
-                {/* === NEW MODULE: GLASS SAFE TREASURY MANAGEMENT === */}
+                {/* === MODULE: GLASS SAFE TREASURY MANAGEMENT === */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-500 shadow-2xl col-span-1 lg:col-span-2 xl:col-span-1 mt-6">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   
@@ -1029,13 +1027,13 @@ function DashboardContent() {
                           <div className="w-full h-px bg-white/[0.03] border-t border-dashed border-white/[0.05]"></div>
                        </div>
                        
-                       {analytics.monthlyData.map((data, idx) => {
+                       {analytics.monthlyData.map((data) => {
                           const networkPct = Math.max((data.networkTotal / analytics.maxMonthValue) * 100, 1); 
                           const personalPct = data.personalTotal > 0 ? Math.max((data.personalTotal / analytics.maxMonthValue) * 100, 1) : 0;
                           const isZero = data.networkTotal === 0;
 
                           return (
-                            <div key={idx} tabIndex={0} className="flex flex-col items-center flex-1 group/month relative h-full justify-end cursor-pointer outline-none touch-manipulation">
+                            <div key={data.key} tabIndex={0} className="flex flex-col items-center flex-1 group/month relative h-full justify-end cursor-pointer outline-none touch-manipulation">
                                
                                <div className="flex items-end justify-center gap-1 md:gap-2 w-full h-full relative z-10">
                                   <div className={`w-3 md:w-6 lg:w-8 transition-all duration-700 ease-out rounded-t-md ${isZero ? 'bg-white/[0.05]' : 'bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.3)] group-hover/month:bg-blue-500 group-focus/month:bg-blue-500'}`} style={{ height: `${networkPct}%` }}></div>
@@ -1196,7 +1194,7 @@ function DashboardContent() {
                       const dueStr = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
                       const period = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.billing_period : invoice.monthly_bills?.billing_period;
                       const { amount, isLate, daysLeft, totalGrace } = calculateDynamicAmount(invoice.amount_due, dueStr);
-                      const usdValue = (amount / ngnToUsdRate).toFixed(2);
+                      const usdValue = (amount / safeUsdRate).toFixed(2);
                       
                       const isVaultReady = baseAllowanceUSDC >= Number(usdValue);
 
@@ -1459,7 +1457,7 @@ function DashboardContent() {
                       <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 blur-3xl rounded-full pointer-events-none"></div>
                       <span className="text-blue-400 text-[10px] font-mono uppercase tracking-widest block mb-2 relative z-10">Amount Due</span>
                       <div className="flex items-baseline justify-center gap-1.5 relative z-10">
-                        <span className="text-4xl md:text-5xl text-white font-bold tabular-nums tracking-tighter">${(activeInvoice.amount_due / ngnToUsdRate).toFixed(2)}</span>
+                        <span className="text-4xl md:text-5xl text-white font-bold tabular-nums tracking-tighter">${(activeInvoice.amount_due / safeUsdRate).toFixed(2)}</span>
                         <span className="text-sm md:text-base text-neutral-500 font-mono font-bold">USDC</span>
                       </div>
                     </div>
