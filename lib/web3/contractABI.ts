@@ -480,5 +480,15 @@ export const TREASURY_ABI = [
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
-  }
+  },
+  {
+    "inputs": [
+        { "name": "destination", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+    ],
+        "name": "routeToExternal",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
 ] as const;

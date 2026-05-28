@@ -5,12 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase'; 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useWriteContract, useSwitchChain, usePublicClient, useReadContract } from 'wagmi';
-// UPGRADE: Added keccak256 and stringToHex for privacy hashing
 import { decodeEventLog, getAddress, parseUnits, keccak256, stringToHex } from 'viem';
 import { base } from 'viem/chains';
 import useSWR from 'swr';
 
-// UPGRADE: Import the exact Treasury ABI and Address we configured
 import { TREASURY_ADDRESS, TREASURY_ABI } from '../../lib/web3/contractABI';
 
 // === PRODUCTION MAINNET CONSTANTS ===
@@ -21,7 +19,8 @@ const ERC20_ABI = [
   { inputs: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }], name: "allowance", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" },
   { inputs: [{ name: "spender", type: "address" }, { name: "amount", type: "uint256" }], name: "approve", outputs: [{ name: "", type: "boolean" }], stateMutability: "nonpayable", type: "function" },
   { anonymous: false, inputs: [{ indexed: true, name: "from", type: "address" }, { indexed: true, name: "to", type: "address" }, { indexed: false, name: "value", type: "uint256" }], name: "Transfer", type: "event" },
-  { inputs: [{ name: "recipient", type: "address" }, { name: "amount", type: "uint256" }], name: "transfer", outputs: [{ name: "", type: "boolean" }], stateMutability: "nonpayable", type: "function" }
+  { inputs: [{ name: "recipient", type: "address" }, { name: "amount", type: "uint256" }], name: "transfer", outputs: [{ name: "", type: "boolean" }], stateMutability: "nonpayable", type: "function" },
+  { inputs: [{ name: "account", type: "address" }], name: "balanceOf", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }
 ] as const;
 
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
@@ -53,15 +52,7 @@ function DashboardContent() {
   const [billAmount, setBillAmount] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(1520);
-  
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const [activeInvoice, setActiveInvoice] = useState<any>(null);
-  const [paymentPortalMode, setPaymentPortalMode] = useState<'FIAT' | 'USDC' | 'VAULT' | null>(null);
-  const [manualTxHash, setManualTxHash] = useState('');
-  const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [paymentLifecycle, setPaymentLifecycle] = useState<'IDLE' | 'PROCESSING' | 'SUCCESS'>('IDLE');
-  
+
   const [viewingReceipt, setViewingReceipt] = useState<any>(null);
   const [allowanceInput, setAllowanceInput] = useState<string>('5');
   const [isApproving, setIsApproving] = useState(false);
@@ -70,7 +61,15 @@ function DashboardContent() {
   const [displayLimit, setDisplayLimit] = useState(8);
   const observer = useRef<IntersectionObserver | null>(null);
 
-  // UPGRADE: Web3 Vault now checks allowance against the TREASURY_ADDRESS
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [activeInvoice, setActiveInvoice] = useState<any>(null);
+  const [paymentPortalMode, setPaymentPortalMode] = useState<'FIAT' | 'USDC' | 'VAULT' | null>(null);
+  const [manualTxHash, setManualTxHash] = useState('');
+  const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [paymentLifecycle, setPaymentLifecycle] = useState<'IDLE' | 'PROCESSING' | 'SUCCESS'>('IDLE');
+
+  // --- CONTRACT READS ---
   const { data: currentAllowanceRaw, refetch: refetchAllowance } = useReadContract({
     address: USDC_CONTRACT_ADDRESS,
     abi: ERC20_ABI,
@@ -78,14 +77,62 @@ function DashboardContent() {
     args: userAddress ? [userAddress, TREASURY_ADDRESS] : undefined,
     query: { enabled: !!userAddress }
   });
-  
   const baseAllowanceUSDC = currentAllowanceRaw ? Number(currentAllowanceRaw) / 1000000 : 0;
+
+  const { data: treasuryBalanceRaw } = useReadContract({
+    address: USDC_CONTRACT_ADDRESS,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [TREASURY_ADDRESS as `0x${string}`],
+    query: { refetchInterval: 10000 }
+  });
+  const treasuryBalance = treasuryBalanceRaw ? Number(treasuryBalanceRaw) / 1000000 : 0;
+
+  // --- TREASURY MANAGEMENT STATE ---
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
+  const [withdrawDestination, setWithdrawDestination] = useState('');
+  const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now();
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
+
+  // --- WITHDRAWAL EXECUTION (ALIGNED TO SMART CONTRACT) ---
+  const handleExecuteWithdrawal = async () => {
+    if (!withdrawDestination || !withdrawDestination.startsWith('0x') || withdrawDestination.length !== 42) {
+      return showToast("Invalid cryptographic destination address.", "error");
+    }
+    if (!withdrawAmountInput || isNaN(Number(withdrawAmountInput)) || Number(withdrawAmountInput) <= 0) {
+      return showToast("Invalid withdrawal liquidity amount.", "error");
+    }
+
+    setIsWithdrawing(true);
+    try {
+      if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
+      
+      const cryptoAmount = parseUnits(withdrawAmountInput, 6);
+      
+      // Directly maps to routeToExternal in CompoundOSTreasury
+      const txHash = await writeContractAsync({
+        address: TREASURY_ADDRESS,
+        abi: TREASURY_ABI,
+        functionName: 'routeToExternal', 
+        args: [withdrawDestination as `0x${string}`, cryptoAmount]
+      });
+
+      showToast("Withdrawal Cryptographically Secured", "success");
+      setIsWithdrawModalOpen(false);
+      setWithdrawAmountInput('');
+      setWithdrawDestination('');
+    } catch (err: any) {
+      showToast(err.shortMessage || err.message, "error");
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
 
   const copyToClipboard = (text: string, fieldId: string) => {
     navigator.clipboard.writeText(text);
@@ -230,7 +277,7 @@ function DashboardContent() {
       const { data: dbUser } = await supabase.from('tenants').select('*').eq('id', session.user.id).single();
       if (!activeExecution) return;
 
-const authPhoto = session.user.user_metadata?.picture || session.user.user_metadata?.avatar_url;      
+      const authPhoto = session.user.user_metadata?.picture || session.user.user_metadata?.avatar_url;      
       if (dbUser && !dbUser.avatar_url && authPhoto) {
          await supabase.from('tenants').update({ avatar_url: authPhoto }).eq('id', session.user.id);
          dbUser.avatar_url = authPhoto;
@@ -442,7 +489,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // UPGRADE: Verify Manual Crypto now searches for the Secure Treasury Event
   const handleVerifyManualCrypto = async () => {
     const cleanedHash = manualTxHash.trim();
     if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) return showToast("Invalid hash format syntax.", "error");
@@ -464,7 +510,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
               data: log.data,
               topics: log.topics
             });
-            // Match the exact event and verify the Zero-Knowledge hash
             if (decoded.eventName === 'InvoicePaidManual' && decoded.args.invoiceHash === expectedHash) {
               validPaymentFound = true;
               break; 
@@ -481,7 +526,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // UPGRADE: 2-Step Execution Flow (Approve -> PayInvoice)
   const handlePayWithConnectedWallet = async () => {
     setPaymentLifecycle('PROCESSING');
     try {
@@ -494,7 +538,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
       const cryptoValue = parseUnits(((dueInfo.amount / ngnToUsdRate).toFixed(6)), 6); 
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
-      // Step 1: Check Current Allowance against the Glass Safe
       const currentAllowance = await publicClient.readContract({
         address: USDC_CONTRACT_ADDRESS,
         abi: ERC20_ABI,
@@ -502,7 +545,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
         args: [userAddress as `0x${string}`, TREASURY_ADDRESS]
       });
 
-      // Step 2: Trigger Approval if limit is insufficient
       if (currentAllowance < cryptoValue) {
         showToast("Step 1: Approving Treasury for secure transfer...", "info");
         const approveHash = await writeContractAsync({
@@ -516,7 +558,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
         showToast("Approval Confirmed. Executing Settlement...", "success");
       }
 
-      // Step 3: Execute Secure Settlement
       const txHash = await writeContractAsync({ 
         address: TREASURY_ADDRESS, 
         abi: TREASURY_ABI, 
@@ -577,7 +618,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
     }
   };
 
-  // UPGRADE: Web3 Vault Approval is now mapped securely to TREASURY_ADDRESS
   const handleApproveAllowance = async () => {
     if (!allowanceInput || isNaN(Number(allowanceInput)) || Number(allowanceInput) <= 0) return showToast("Enter a valid USDC amount", "error");
     setIsApproving(true);
@@ -596,7 +636,8 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
   };
 
   const resolvedUserName = user?.user_metadata?.full_name || user?.full_name || "Compound Node";
-  const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;  const resolvedAvatarUrl = user?.avatar_url || authPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
+  const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;  
+  const resolvedAvatarUrl = user?.avatar_url || authPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     e.currentTarget.src = `https://ui-avatars.com/api/?name=Node&background=111111&color=444444&bold=true`;
@@ -679,8 +720,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
            </div>
            <div className="flex items-center gap-2">
               <ConnectButton chainStatus={{ smallScreen: 'icon', largeScreen: 'full' }} accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }} showBalance={false} />
-              
-              {/* MOBILE SIGN OUT BUTTON */}
               <button onClick={handleSignOut} className="text-neutral-500 hover:text-red-400 p-2 bg-white/[0.02] border border-white/10 rounded-xl transition-colors shadow-sm" title="Sign Out">
                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
               </button>
@@ -857,6 +896,36 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                        <p className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">No nodes mapped from database.</p>
                      </div>
                    )}
+                </div>
+
+                {/* === NEW MODULE: GLASS SAFE TREASURY MANAGEMENT === */}
+                <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-500 shadow-2xl col-span-1 lg:col-span-2 xl:col-span-1 mt-6">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                  
+                  <div className="relative z-10 flex justify-between items-start">
+                    <div>
+                      <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2 mb-2">
+                        <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+                        Treasury Liquidity
+                      </h2>
+                      <p className="text-[10px] md:text-[11px] text-neutral-400 font-mono relative z-10">Real-time Smart Contract TVL</p>
+                    </div>
+                    <div className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] font-mono rounded-full uppercase tracking-widest">
+                      Secured
+                    </div>
+                  </div>
+                  
+                  <div className="mt-8 md:mt-12 relative z-10">
+                    <div className="flex items-baseline gap-1.5 mb-6">
+                      <span className="text-5xl md:text-6xl font-bold text-white font-mono tabular-nums tracking-tighter">${treasuryBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      <span className="text-xl text-neutral-500 font-mono font-bold">USDC</span>
+                    </div>
+                    
+                    <button onClick={() => setIsWithdrawModalOpen(true)} className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white py-4 rounded-xl font-bold text-[11px] md:text-xs font-mono uppercase tracking-wider transition-all shadow-[0_0_20px_rgba(255,255,255,0.02)] flex items-center justify-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                      Initialize Withdrawal
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1440,7 +1509,6 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
                         </div>
                       </div>
                       
-                      {/* UPGRADE: Displays the Secure Smart Contract Address */}
                       <div className="bg-[#0A0A0A] border border-white/5 p-3 flex items-center justify-between gap-3 rounded-xl focus-within:border-white/20 transition-colors">
                         <div className="flex flex-col min-w-0">
                            <span className="text-[8px] text-neutral-500 font-mono uppercase mb-0.5">Glass Safe Address (Base Network)</span>
@@ -1467,6 +1535,96 @@ const authPhoto = session.user.user_metadata?.picture || session.user.user_metad
           </div>
         </div>
       )}
+
+      {/* --- WITHDRAWAL GATEWAY MODAL --- */}
+      {isWithdrawModalOpen && (
+        <div className="fixed inset-0 z-[120] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/90 backdrop-blur-xl transition-all animate-in fade-in duration-200">
+          <div className="w-full md:max-w-[480px] bg-[#050505] border-t md:border border-white/10 rounded-t-3xl md:rounded-3xl p-6 md:p-8 flex flex-col max-h-[90vh] overflow-y-auto custom-scrollbar shadow-[0_0_100px_rgba(0,0,0,1)] animate-in slide-in-from-bottom-10 md:zoom-in-95 duration-300">
+            
+            <div className="flex justify-between items-start mb-8">
+              <div>
+                <h3 className="text-[10px] font-bold text-emerald-400 font-mono uppercase tracking-widest flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+                  L1/L2 Extraction Engine
+                </h3>
+                <p className="text-sm font-bold text-white font-mono uppercase mt-1">Route Treasury Liquidity</p>
+              </div>
+              <button onClick={() => setIsWithdrawModalOpen(false)} className="text-neutral-500 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-full transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Balance Display */}
+              <div className="bg-emerald-500/5 border border-emerald-500/20 p-5 rounded-2xl flex justify-between items-center">
+                <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">Available Capacity</span>
+                <span className="text-lg font-mono font-bold text-emerald-400">${treasuryBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC</span>
+              </div>
+
+              {/* Amount Input */}
+              <div className="space-y-2">
+                <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1">Extraction Amount (USDC)</label>
+                <div className="relative focus-within:shadow-[0_0_20px_rgba(16,185,129,0.1)] transition-all">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-500 font-mono text-sm font-bold">$</span>
+                  <input 
+                    type="number" 
+                    value={withdrawAmountInput} 
+                    onChange={(e) => setWithdrawAmountInput(e.target.value)} 
+                    placeholder="0.00" 
+                    className="w-full bg-[#0A0A0A] border border-white/10 py-4 pl-8 pr-20 text-white font-mono tabular-nums text-lg focus:outline-none focus:border-emerald-500/50 rounded-xl" 
+                  />
+                  <button 
+                    onClick={() => setWithdrawAmountInput(treasuryBalance.toString())}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-mono font-bold bg-white/5 hover:bg-white/10 text-white px-3 py-1.5 rounded-lg transition-colors uppercase"
+                  >
+                    Max
+                  </button>
+                </div>
+              </div>
+
+        {/* Destination Address Input */}
+        <div className="space-y-2">
+          <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1 flex justify-between">
+            <span>Destination Vector</span>
+            <span className="text-emerald-500/70">CEX or Non-Custodial</span>
+          </label>
+          <div className="relative focus-within:shadow-[0_0_20px_rgba(16,185,129,0.1)] transition-all">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+            </div>
+            <input 
+              type="text" 
+              value={withdrawDestination} 
+              onChange={(e) => setWithdrawDestination(e.target.value)} 
+              placeholder="0x..." 
+              className="w-full bg-[#0A0A0A] border border-white/10 py-4 pl-10 pr-4 text-white font-mono text-sm focus:outline-none focus:border-emerald-500/50 rounded-xl placeholder-neutral-700" 
+            />
+          </div>
+        </div>
+
+        {/* Warning & Execution */}
+        <div className="pt-4">
+          <p className="text-[8px] text-neutral-500 font-mono uppercase tracking-widest leading-relaxed mb-4 text-center">
+            Verification Warning: Ensure the destination vector resides on the Base Mainnet. Funds routed to unsupported networks will be permanently lost.
+          </p>
+          <button 
+            onClick={handleExecuteWithdrawal} 
+            disabled={isWithdrawing || !withdrawAmountInput || !withdrawDestination}
+            className="w-full bg-emerald-500 hover:bg-emerald-400 text-black py-4 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-all disabled:opacity-30 disabled:hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] flex items-center justify-center gap-2"
+          >
+            {isWithdrawing ? (
+              <>
+                <div className="w-3 h-3 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
+                Cryptographic Signing...
+              </>
+            ) : (
+              'Confirm Cryptographic Transfer'
+            )}
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+)}
 
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 3px; }
