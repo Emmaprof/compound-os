@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // Using the absolute path we established
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount } from 'wagmi';
 
@@ -16,12 +16,17 @@ export default function AuthTerminal() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // SECURE ROUTING LOOP: Autonomous redirect upon successful Web3 Connection
+  // SECURE ROUTING LOOP: Only redirect if a true Database Session exists.
+  // This completely eliminates the Infinite Redirect Loop.
   useEffect(() => {
-    if (isConnected) {
-      router.push('/dashboard');
-    }
-  }, [isConnected, router]);
+    const verifyDatabaseSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        router.push('/dashboard');
+      }
+    };
+    verifyDatabaseSession();
+  }, [router]);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -137,52 +142,10 @@ export default function AuthTerminal() {
                 Continue with Google
               </button>
 
-              <ConnectButton.Custom>
-                {({ account, chain, openAccountModal, openChainModal, openConnectModal, authenticationStatus, mounted }) => {
-                  const ready = mounted && authenticationStatus !== 'loading';
-                  const connected = ready && account && chain && (!authenticationStatus || authenticationStatus === 'authenticated');
-
-                  return (
-                    <div {...(!ready && { 'aria-hidden': true, style: { opacity: 0, pointerEvents: 'none', userSelect: 'none' } })}>
-                      {(() => {
-                        if (!connected) {
-                          return (
-                            <button onClick={openConnectModal} type="button" className="w-full flex items-center justify-center gap-3 bg-white hover:bg-neutral-200 text-black py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-                              Connect Web3 Wallet
-                            </button>
-                          );
-                        }
-
-                        if (chain.unsupported) {
-                          return (
-                            <button onClick={openChainModal} type="button" className="w-full flex items-center justify-center gap-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors">
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
-                              Wrong Network
-                            </button>
-                          );
-                        }
-
-                        return (
-                          <div className="flex gap-2 w-full animate-in fade-in duration-300">
-                            <button onClick={openChainModal} style={{ display: 'flex', alignItems: 'center' }} type="button" className="bg-[#050505] hover:bg-white/5 text-white px-3 py-3.5 rounded-xl transition-colors border border-white/10 shadow-[inset_0_0_10px_rgba(255,255,255,0.02)]">
-                              {chain.hasIcon && (
-                                <div style={{ background: chain.iconBackground, width: 16, height: 16, borderRadius: 999, overflow: 'hidden' }}>
-                                  {chain.iconUrl && <img alt={chain.name ?? 'Chain icon'} src={chain.iconUrl} style={{ width: 16, height: 16 }} />}
-                                </div>
-                              )}
-                            </button>
-
-                            <button onClick={openAccountModal} type="button" className="flex-1 flex items-center justify-center gap-2 bg-[#050505] hover:bg-white/5 text-white py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors border border-white/10 shadow-[inset_0_0_10px_rgba(255,255,255,0.02)]">
-                              {account.displayName}
-                            </button>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  );
-                }}
-              </ConnectButton.Custom>
+              {/* Secure Web3 Wallet Injector */}
+              <div className="w-full flex items-center justify-center py-1 [&>div]:w-full [&_button]:w-full">
+                 <ConnectButton label="Connect Web3 Identity" />
+              </div>
             </div>
 
             <div className="flex items-center gap-4 py-2">
