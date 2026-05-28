@@ -1,213 +1,105 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; // Using the absolute path we established
-import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount } from 'wagmi';
+import Link from 'next/link';
 
-export default function AuthTerminal() {
+export default function LandingPage() {
   const router = useRouter();
-  const { isConnected } = useAccount();
-  
-  const [authMode, setAuthMode] = useState<'SIGN_IN' | 'SIGN_UP'>('SIGN_IN');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-
-  // SECURE ROUTING LOOP: Only redirect if a true Database Session exists.
-  // This completely eliminates the Infinite Redirect Loop.
-  useEffect(() => {
-    const verifyDatabaseSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        router.push('/dashboard');
-      }
-    };
-    verifyDatabaseSession();
-  }, [router]);
-
-  const handleEmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setErrorMsg('');
-
-    try {
-      if (authMode === 'SIGN_UP') {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        setErrorMsg('Node registered. Check email for cryptographic verification.');
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        router.push('/dashboard');
-      }
-    } catch (err: any) {
-      setErrorMsg(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    setIsLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: `${window.location.origin}/dashboard` }
-      });
-      if (error) throw error;
-    } catch (err: any) {
-      setErrorMsg(err.message);
-      setIsLoading(false);
-    }
-  };
 
   return (
-    <div className="min-h-[100dvh] flex flex-col md:flex-row bg-black text-white relative overflow-hidden">
+    <div className="min-h-[100dvh] bg-black text-white relative overflow-hidden font-sans selection:bg-blue-500/30">
       
-      {/* Background Gradients */}
+      {/* Immersive Background Gradients */}
       <div className="absolute inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] bg-blue-600/10 rounded-full blur-[120px] mix-blend-screen"></div>
-        <div className="absolute bottom-[-20%] right-[-10%] w-[40vw] h-[40vw] bg-emerald-600/10 rounded-full blur-[100px] mix-blend-screen"></div>
-        <div className="absolute inset-0 opacity-[0.1]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.2) 1px, transparent 0)`, backgroundSize: '32px 32px' }}></div>
+        <div className="absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] bg-blue-600/10 rounded-full blur-[150px] mix-blend-screen animate-pulse duration-10000"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] bg-emerald-600/10 rounded-full blur-[150px] mix-blend-screen"></div>
+        <div className="absolute inset-0 opacity-[0.15]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.2) 1px, transparent 0)`, backgroundSize: '40px 40px' }}></div>
       </div>
 
-      {/* Left Column - Branding */}
-      <div className="hidden md:flex flex-1 flex-col justify-between p-12 border-r border-white/[0.05] relative z-10 bg-black/40 backdrop-blur-sm">
-        <div className="flex items-center gap-4 cursor-pointer" onClick={() => router.push('/')}>
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 p-[1px] shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-            <div className="w-full h-full bg-black rounded-lg flex items-center justify-center">
-              <span className="w-2 h-2 bg-white rounded-sm shadow-[0_0_10px_rgba(255,255,255,0.8)]"></span>
+      {/* Transparent Navigation Bar */}
+      <nav className="relative z-50 flex items-center justify-between px-6 py-6 md:px-12 md:py-8">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 p-[1px] shadow-[0_0_20px_rgba(59,130,246,0.4)]">
+            <div className="w-full h-full bg-black rounded-xl flex items-center justify-center">
+              <span className="w-2.5 h-2.5 bg-white rounded-sm shadow-[0_0_10px_rgba(255,255,255,0.8)]"></span>
             </div>
           </div>
-          <h1 className="text-lg font-bold tracking-tight text-white">CompoundOS</h1>
+          <span className="text-lg md:text-xl font-bold tracking-tight text-white">CompoundOS</span>
         </div>
-
-        <div>
-          <h2 className="text-4xl lg:text-5xl font-extrabold tracking-tighter leading-tight text-white mb-6">
-            Authenticate <br />
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-emerald-400 to-white">Infrastructure Node.</span>
-          </h2>
-          <p className="text-sm text-neutral-400 font-mono leading-relaxed max-w-md">
-            Secure entry protocol for CompoundOS residents and administrators. All active sessions are cryptographically bound to the Base L2 Network.
-          </p>
-        </div>
-
-        <p className="text-[10px] font-mono text-neutral-600 uppercase tracking-widest">
-          SECURE CONNECTION • 256-BIT ENCRYPTION
-        </p>
-      </div>
-
-      {/* Right Column - Auth Interface */}
-      <div className="flex-1 flex items-center justify-center p-6 md:p-12 relative z-10">
         
-        {/* Mobile Header */}
-        <div className="absolute top-6 left-6 md:hidden flex items-center gap-3 cursor-pointer" onClick={() => router.push('/')}>
-          <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-blue-700 p-[1px]">
-            <div className="w-full h-full bg-black rounded flex items-center justify-center">
-              <span className="w-1.5 h-1.5 bg-white rounded-sm"></span>
-            </div>
-          </div>
-          <h1 className="text-sm font-bold tracking-tight text-white">CompoundOS</h1>
+        <div className="flex items-center gap-6">
+          <Link href="/auth" className="hidden md:block text-xs font-mono uppercase tracking-widest text-neutral-400 hover:text-white transition-colors">
+            Protocol Login
+          </Link>
+          <button 
+            onClick={() => router.push('/auth')}
+            className="bg-white hover:bg-neutral-200 text-black px-6 py-3 rounded-xl text-[10px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_30px_rgba(255,255,255,0.2)]"
+          >
+            Launch Terminal
+          </button>
+        </div>
+      </nav>
+
+      {/* Main Hero Section */}
+      <main className="relative z-10 flex flex-col items-center justify-center min-h-[calc(100dvh-100px)] px-6 text-center max-w-5xl mx-auto">
+        
+        <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-full mb-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>
+          <span className="text-[10px] font-mono font-bold text-blue-400 uppercase tracking-widest">Base L2 Mainnet Live</span>
         </div>
 
-        <div className="w-full max-w-[400px] mt-12 md:mt-0">
+        <h1 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tighter leading-[1.1] text-white mb-8 animate-in fade-in slide-in-from-bottom-6 duration-700 delay-100">
+          Decentralized <br className="hidden md:block" />
+          <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-emerald-400 to-white">Residential OS.</span>
+        </h1>
+
+        <p className="text-base md:text-lg text-neutral-400 font-mono leading-relaxed max-w-2xl mb-12 animate-in fade-in slide-in-from-bottom-8 duration-700 delay-200">
+          The autonomous settlement layer for utility management. CompoundOS leverages Web3 cryptography and automated smart contracts to secure, split, and settle residential network bills with zero friction.
+        </p>
+
+        <div className="flex flex-col sm:flex-row items-center gap-4 w-full sm:w-auto animate-in fade-in slide-in-from-bottom-10 duration-700 delay-300">
+          <button 
+            onClick={() => router.push('/auth')}
+            className="w-full sm:w-auto bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-8 py-4 rounded-2xl text-[11px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_30px_rgba(59,130,246,0.3)] flex items-center justify-center gap-3"
+          >
+            Access Network Node
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+          </button>
           
-          <div className="flex items-center gap-6 border-b border-white/10 mb-8 pb-4">
-            <button 
-              onClick={() => { setAuthMode('SIGN_IN'); setErrorMsg(''); }}
-              className={`text-xs font-mono font-bold uppercase tracking-widest transition-colors ${authMode === 'SIGN_IN' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-            >
-              Sign In
-            </button>
-            <button 
-              onClick={() => { setAuthMode('SIGN_UP'); setErrorMsg(''); }}
-              className={`text-xs font-mono font-bold uppercase tracking-widest transition-colors ${authMode === 'SIGN_UP' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-            >
-              Register Node
-            </button>
+          <button 
+            onClick={() => window.open('https://basescan.org', '_blank')}
+            className="w-full sm:w-auto bg-transparent hover:bg-white/5 border border-white/10 text-white px-8 py-4 rounded-2xl text-[11px] md:text-xs font-mono font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-3"
+          >
+            View Smart Contract
+          </button>
+        </div>
+
+        {/* Feature Grid (Optional UI Polish) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-24 w-full max-w-4xl text-left border-t border-white/5 pt-12 animate-in fade-in duration-1000 delay-500">
+          <div>
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 mb-4 border border-blue-500/20">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Instant Settlements</h3>
+            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Cryptographic USDC routing bypasses traditional banking latency.</p>
           </div>
-
-          <div className="space-y-6">
-            
-            <div className="space-y-3">
-              <button 
-                onClick={handleGoogleAuth}
-                disabled={isLoading}
-                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-neutral-200 text-black py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors disabled:opacity-50"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
-                Continue with Google
-              </button>
-
-              {/* Secure Web3 Wallet Injector */}
-              <div className="w-full flex items-center justify-center py-1 [&>div]:w-full [&_button]:w-full">
-                 <ConnectButton label="Connect Web3 Identity" />
-              </div>
+          <div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-4 border border-emerald-500/20">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
             </div>
-
-            <div className="flex items-center gap-4 py-2">
-              <div className="h-px bg-white/10 flex-1"></div>
-              <span className="text-[9px] font-mono text-neutral-600 uppercase tracking-widest">OR EMAIL</span>
-              <div className="h-px bg-white/10 flex-1"></div>
+            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Un-hackable Core</h3>
+            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Secured directly on the Base Layer 2 Ethereum Network.</p>
+          </div>
+          <div>
+            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 mb-4 border border-purple-500/20">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
             </div>
-
-            <form onSubmit={handleEmailAuth} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest pl-1">Email Address</label>
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  placeholder="node@compound.os" 
-                  className="w-full bg-[#050505] border border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-blue-500/50 transition-colors" 
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest pl-1">Cryptographic Key (Password)</label>
-                <input 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  placeholder="••••••••••••" 
-                  className="w-full bg-[#050505] border border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-blue-500/50 transition-colors" 
-                />
-              </div>
-
-              {errorMsg && (
-                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
-                  <p className="text-[10px] font-mono text-red-400">{errorMsg}</p>
-                </div>
-              )}
-
-              <button 
-                type="submit" 
-                disabled={isLoading}
-                className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(59,130,246,0.2)] disabled:opacity-50 mt-2"
-              >
-                {isLoading ? 'Executing...' : authMode === 'SIGN_IN' ? 'Initialize Session' : 'Create Identity'}
-              </button>
-            </form>
-
-            <div className="mt-8 text-center border-t border-white/5 pt-4">
-              <a 
-                href="/privacy" 
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[9px] font-mono text-neutral-600 hover:text-neutral-400 uppercase tracking-widest transition-colors"
-              >
-                Review Privacy Policy & Protocol Data Handling
-              </a>
-            </div>
-
+            <h3 className="text-sm font-bold font-mono text-white uppercase tracking-wider mb-2">Automated Matrix</h3>
+            <p className="text-[10px] md:text-xs text-neutral-500 font-mono leading-relaxed">Dynamic load balancing and invoice deployment for all active nodes.</p>
           </div>
         </div>
-      </div>
+
+      </main>
     </div>
   );
 }
