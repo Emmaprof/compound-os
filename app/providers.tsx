@@ -1,40 +1,29 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 import { RainbowKitProvider, darkTheme, getDefaultConfig } from '@rainbow-me/rainbowkit';
 import { base } from 'viem/chains';
 import '@rainbow-me/rainbowkit/styles.css';
 
-// Centralized Web3 Configuration - Cleaned of all SSR-crashing elements
+// 1. Centralized Web3 Configuration with Metadata for WalletConnect UI
 const config = getDefaultConfig({
   appName: 'CompoundOS',
   projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || '6e801c6b7bed1dd0117a54c9017b1a0d', 
   chains: [base],
-  ssr: true,
+  ssr: true, // Tells Wagmi to delay wallet hydration until the client loads
   appDescription: 'Core Network Infrastructure',
   appUrl: 'https://compoundos-node.vercel.app',
   appIcon: 'https://compoundos-node.vercel.app/logo.jpg', 
 });
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  // 2. Enterprise Standard: Initialize QueryClient inside useState.
+  // This guarantees each user gets their own isolated cache instance, 
+  // preventing cross-request data leakage in Next.js SSR.
   const [queryClient] = useState(() => new QueryClient());
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-    
-    // Global error silencer for safe wallet disconnects
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      if (event.reason?.message?.includes('Connection interrupted')) {
-        event.preventDefault();
-      }
-    };
-    window.addEventListener('unhandledrejection', handleUnhandledRejection);
-    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
-  }, []);
 
   return (
     <WagmiProvider config={config}>
@@ -47,7 +36,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
             fontStack: 'system'
           })}
         >
-          {mounted ? children : null}
+          {/* 3. Clean Render Tree: Let Next.js handle SSR normally */}
+          {children}
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

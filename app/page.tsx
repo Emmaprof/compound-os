@@ -1,87 +1,250 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { ConnectButton } from '@rainbow-me/rainbowkit';
 
-export default function LandingPage() {
+export default function AuthTerminal() {
   const router = useRouter();
-  const [isInitializing, setIsInitializing] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [authMode, setAuthMode] = useState<'SIGN_IN' | 'SIGN_UP'>('SIGN_IN');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
-  const handleInitialize = () => {
-    setIsInitializing(true);
-    // Simulates a secure connection sequence before routing to the Auth screen
-    setTimeout(() => {
-      router.push('/auth');
-    }, 800);
+  // Hydration Guard: Prevents Vercel 3-second crash
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setErrorMsg('');
+
+    try {
+      if (authMode === 'SIGN_UP') {
+        const { error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        setErrorMsg('Node registered. Check email for cryptographic verification.');
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        router.push('/dashboard');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleAuth = async () => {
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: `${window.location.origin}/dashboard` }
+      });
+      if (error) throw error;
+    } catch (err: any) {
+      setErrorMsg(err.message);
+      setIsLoading(false);
+    }
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[#050505] text-white flex flex-col items-center justify-center relative overflow-hidden font-sans">
-      
-      {/* Background Engineering Grid */}
-      <div className="absolute inset-0 z-0 opacity-[0.15]" style={{ backgroundImage: 'linear-gradient(#444 1px, transparent 1px), linear-gradient(90deg, #444 1px, transparent 1px)', backgroundSize: '40px 40px' }}></div>
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050505]/80 to-[#050505] z-0 pointer-events-none"></div>
+    <div className="min-h-[100dvh] flex flex-col md:flex-row bg-black text-white relative overflow-hidden">
+      {/* Background Gradients */}
+      <div className="absolute inset-0 pointer-events-none z-0">
+        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] bg-blue-600/10 rounded-full blur-[120px] mix-blend-screen"></div>
+        <div className="absolute bottom-[-20%] right-[-10%] w-[40vw] h-[40vw] bg-emerald-600/10 rounded-full blur-[100px] mix-blend-screen"></div>
+        <div className="absolute inset-0 opacity-[0.1]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.2) 1px, transparent 0)`, backgroundSize: '32px 32px' }}></div>
+      </div>
 
-      {/* Atmospheric Glowing Orbs */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[600px] h-[300px] md:h-[600px] bg-blue-600/20 rounded-full blur-[100px] md:blur-[150px] pointer-events-none z-0 mix-blend-screen"></div>
-
-      {/* Central Terminal Interface */}
-      <div className="relative z-10 w-full max-w-[420px] p-6 animate-in fade-in zoom-in-95 duration-700">
-        <div className="bg-[#0A0A0A]/80 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,1)] overflow-hidden">
-
-          {/* Terminal Header */}
-          <div className="border-b border-white/10 p-4 bg-white/[0.02] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500/80 shadow-[0_0_8px_rgba(239,68,68,0.5)]"></div>
-              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/80 shadow-[0_0_8px_rgba(234,179,8,0.5)]"></div>
-              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+      {/* Left Column - Branding (Hidden on small mobile, visible on tablet+) */}
+      <div className="hidden md:flex flex-1 flex-col justify-between p-12 border-r border-white/[0.05] relative z-10 bg-black/40 backdrop-blur-sm">
+        <div className="flex items-center gap-4 cursor-pointer" onClick={() => router.push('/')}>
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 p-[1px] shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+            <div className="w-full h-full bg-black rounded-lg flex items-center justify-center">
+              <span className="w-2 h-2 bg-white rounded-sm shadow-[0_0_10px_rgba(255,255,255,0.8)]"></span>
             </div>
-            <span className="text-[9px] font-mono text-neutral-500 tracking-widest uppercase">Network Status: Optimal</span>
           </div>
-
-          {/* Terminal Body */}
-          <div className="p-8 md:p-10 text-center flex flex-col items-center">
-            
-            <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 p-[1px] mb-6 shadow-[0_0_30px_rgba(59,130,246,0.3)]">
-              <div className="w-full h-full bg-[#050505] rounded-2xl flex items-center justify-center">
-                <span className="w-4 h-4 bg-white rounded shadow-[0_0_10px_rgba(255,255,255,1)]"></span>
-              </div>
-            </div>
-
-            <div className="w-full mb-8 space-y-1">
-              <h2 className="text-[9px] md:text-[10px] text-blue-400 font-mono font-bold tracking-widest uppercase">CompoundOS / Infrastructure Node</h2>
-              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white leading-tight">Welcome to CompoundOS</h1>
-            </div>
-
-            <div className="w-full bg-[#000] border border-white/5 rounded-2xl p-5 mb-8 shadow-inner">
-              <p className="text-xs text-neutral-400 font-mono tracking-wider">Node Access Terminal</p>
-              <div className="mt-2.5 flex items-center justify-center gap-2">
-                 <span className="text-[10px] text-emerald-400 font-mono uppercase tracking-widest bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded">System Operational</span>
-                 <span className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Latency 12ms</span>
-              </div>
-            </div>
-
-            <button
-              onClick={handleInitialize}
-              disabled={isInitializing}
-              className="w-full bg-white hover:bg-neutral-200 text-black py-4 rounded-xl text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] flex items-center justify-center gap-3"
-            >
-              {isInitializing ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-black/20 border-t-black rounded-full animate-spin"></div>
-                  Establishing Secure Link...
-                </>
-              ) : (
-                'Initialize Secure Workspace'
-              )}
-            </button>
-          </div>
+          <h1 className="text-lg font-bold tracking-tight text-white">CompoundOS</h1>
         </div>
 
-        <div className="text-center mt-6">
-          <p className="text-[9px] font-mono text-neutral-600 uppercase tracking-widest">
-            SECURE CONNECTION • 256-BIT ENCRYPTION
+        <div>
+          <h2 className="text-4xl lg:text-5xl font-extrabold tracking-tighter leading-tight text-white mb-6">
+            Authenticate <br />
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-emerald-400 to-white">Infrastructure Node.</span>
+          </h2>
+          <p className="text-sm text-neutral-400 font-mono leading-relaxed max-w-md">
+            Secure entry protocol for CompoundOS residents and administrators. All active sessions are cryptographically bound to the Base L2 Network.
           </p>
+        </div>
+
+        <p className="text-[10px] font-mono text-neutral-600 uppercase tracking-widest">
+          SECURE CONNECTION • 256-BIT ENCRYPTION
+        </p>
+      </div>
+
+      {/* Right Column - Auth Interface */}
+      <div className="flex-1 flex items-center justify-center p-6 md:p-12 relative z-10">
+        {/* Mobile Header (Visible only on small screens) */}
+        <div className="absolute top-6 left-6 md:hidden flex items-center gap-3 cursor-pointer" onClick={() => router.push('/')}>
+          <div className="w-6 h-6 rounded bg-gradient-to-br from-blue-500 to-blue-700 p-[1px]">
+            <div className="w-full h-full bg-black rounded flex items-center justify-center">
+              <span className="w-1.5 h-1.5 bg-white rounded-sm"></span>
+            </div>
+          </div>
+          <h1 className="text-sm font-bold tracking-tight text-white">CompoundOS</h1>
+        </div>
+
+        <div className="w-full max-w-[400px] mt-12 md:mt-0">
+          <div className="flex items-center gap-6 border-b border-white/10 mb-8 pb-4">
+            <button
+              onClick={() => { setAuthMode('SIGN_IN'); setErrorMsg(''); }}
+              className={`text-xs font-mono font-bold uppercase tracking-widest transition-colors ${authMode === 'SIGN_IN' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => { setAuthMode('SIGN_UP'); setErrorMsg(''); }}
+              className={`text-xs font-mono font-bold uppercase tracking-widest transition-colors ${authMode === 'SIGN_UP' ? 'text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >
+              Register Node
+            </button>
+          </div>
+
+          <div className="space-y-6">
+            {/* OAUTH & WEB3 BUTTONS */}
+            <div className="space-y-3">
+              <button
+                onClick={handleGoogleAuth}
+                disabled={isLoading}
+                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-neutral-200 text-black py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors disabled:opacity-50"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                Continue with Google
+              </button>
+
+              {/* Web3 Wallet Injector - Fixed Ghost Bug */}
+              <div className="w-full flex items-center justify-center py-1 [&>div]:w-full [&_button]:w-full">
+                {mounted ? (
+                  <ConnectButton.Custom>
+                    {({ account, chain, openAccountModal, openChainModal, openConnectModal, mounted: rkMounted }) => {
+                      const ready = rkMounted;
+                      const connected = ready && account && chain;
+
+                      return (
+                        <div {...(!ready && { 'aria-hidden': true, style: { opacity: 0, pointerEvents: 'none', userSelect: 'none' } })}>
+                          {(() => {
+                            if (!connected) {
+                              return (
+                                <button onClick={openConnectModal} type="button" className="w-full flex items-center justify-center gap-3 bg-white hover:bg-neutral-200 text-black py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                                  Connect Web3 Wallet
+                                </button>
+                              );
+                            }
+
+                            if (chain.unsupported) {
+                              return (
+                                <button onClick={openChainModal} type="button" className="w-full flex items-center justify-center gap-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors">
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                                  Wrong Network
+                                </button>
+                              );
+                            }
+
+                            return (
+                              <div className="flex gap-2 w-full animate-in fade-in duration-300">
+                                <button onClick={openChainModal} style={{ display: 'flex', alignItems: 'center' }} type="button" className="bg-[#050505] hover:bg-white/5 text-white px-3 py-3.5 rounded-xl transition-colors border border-white/10 shadow-[inset_0_0_10px_rgba(255,255,255,0.02)]">
+                                  {chain.hasIcon && (
+                                    <div style={{ background: chain.iconBackground, width: 16, height: 16, borderRadius: 999, overflow: 'hidden' }}>
+                                      {chain.iconUrl && <img alt={chain.name ?? 'Chain icon'} src={chain.iconUrl} style={{ width: 16, height: 16 }} />}
+                                    </div>
+                                  )}
+                                </button>
+
+                                <button onClick={openAccountModal} type="button" className="flex-1 flex items-center justify-center gap-2 bg-[#050505] hover:bg-white/5 text-white py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-colors border border-white/10 shadow-[inset_0_0_10px_rgba(255,255,255,0.02)]">
+                                  {account.displayName}
+                                </button>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      );
+                    }}
+                  </ConnectButton.Custom>
+                ) : (
+                  <div className="w-full py-3.5 rounded-xl bg-white/5 animate-pulse h-[46px]"></div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 py-2">
+              <div className="h-px bg-white/10 flex-1"></div>
+              <span className="text-[9px] font-mono text-neutral-600 uppercase tracking-widest">OR EMAIL</span>
+              <div className="h-px bg-white/10 flex-1"></div>
+            </div>
+
+            {/* EMAIL FORM */}
+            <form onSubmit={handleEmailAuth} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest pl-1">Email Address</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  placeholder="node@compound.os"
+                  className="w-full bg-[#050505] border border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-blue-500/50 transition-colors"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest pl-1">Cryptographic Key (Password)</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  placeholder="••••••••••••"
+                  className="w-full bg-[#050505] border border-white/10 px-4 py-3.5 rounded-xl font-mono text-[11px] text-white placeholder-neutral-700 focus:outline-none focus:border-blue-500/50 transition-colors"
+                />
+              </div>
+
+              {errorMsg && (
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <p className="text-[10px] font-mono text-red-400">{errorMsg}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white py-3.5 rounded-xl text-[11px] font-mono font-bold uppercase tracking-widest transition-all shadow-[0_0_20px_rgba(59,130,246,0.2)] disabled:opacity-50 mt-2"
+              >
+                {isLoading ? 'Executing...' : authMode === 'SIGN_IN' ? 'Initialize Session' : 'Create Identity'}
+              </button>
+            </form>
+
+            {/* COMPLIANCE FOOTER */}
+            <div className="mt-8 text-center border-t border-white/5 pt-4">
+              <a
+                href="/privacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[9px] font-mono text-neutral-600 hover:text-neutral-400 uppercase tracking-widest transition-colors"
+              >
+                Review Privacy Policy & Protocol Data Handling
+              </a>
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
