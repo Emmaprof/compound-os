@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase'; 
 import { ConnectButton } from '@rainbow-me/rainbowkit';
@@ -24,7 +24,58 @@ const ERC20_ABI = [
   { inputs: [{ name: "account", type: "address" }], name: "balanceOf", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }
 ] as const;
 
+// === TYPE DEFINITIONS ===
 type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
+type Workspace = 'RESIDENT' | 'ADMIN' | 'ANALYTICS';
+type PaymentMode = 'FIAT' | 'USDC' | 'VAULT' | null;
+type Lifecycle = 'IDLE' | 'PROCESSING' | 'SUCCESS';
+
+interface Tenant {
+  id: string;
+  email: string;
+  full_name: string;
+  avatar_url: string;
+  is_active: boolean;
+  is_admin: boolean;
+}
+
+interface MonthlyBillData {
+  billing_period?: string;
+  due_date?: string;
+}
+
+interface Invoice {
+  id: string;
+  amount_due: number;
+  is_paid: boolean | string;
+  payment_method: string;
+  transaction_reference: string;
+  paid_at: string;
+  created_at: string;
+  tenant_id: string;
+  monthly_bills?: MonthlyBillData | MonthlyBillData[] | null; 
+  tenants?: { full_name: string; avatar_url: string };
+}
+
+// === DEBOUNCE UTILITY FOR WEBSOCKETS ===
+function debounce<T extends (...args: any[]) => void>(func: T, wait: number): T {
+  let timeout: NodeJS.Timeout;
+  return ((...args: any[]) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  }) as T;
+}
+
+// === UTILITY: SAFE BILL EXTRACTOR ===
+const extractBillData = (monthlyBills: Invoice['monthly_bills']) => {
+  if (!monthlyBills) return { dueDate: '', period: '' };
+  const bill = Array.isArray(monthlyBills) ? monthlyBills[0] : monthlyBills;
+  
+  return {
+    dueDate: bill?.due_date || '',
+    period: bill?.billing_period || ''
+  };
+};
 
 function DashboardContent() {
   const router = useRouter();
@@ -34,10 +85,45 @@ function DashboardContent() {
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient();
 
-  // Web3 Error Silencer
+  // Core State
+  const [user, setUser] = useState<Tenant | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [activeWorkspace, setActiveWorkspace] = useState<Workspace>('RESIDENT'); 
+  const [isVerifyingRedirect, setIsVerifyingRedirect] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  
+  // Modals & Inputs
+  const [billAmount, setBillAmount] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(FALLBACK_EXCHANGE_RATE);
+  const [viewingReceipt, setViewingReceipt] = useState<Invoice | null>(null);
+  const [allowanceInput, setAllowanceInput] = useState<string>('5');
+  const [isApproving, setIsApproving] = useState(false);
+  const [displayLimit, setDisplayLimit] = useState(8);
+  const observer = useRef<IntersectionObserver | null>(null);
+
+  // Payment State
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
+  const [paymentPortalMode, setPaymentPortalMode] = useState<PaymentMode>(null);
+  const [manualTxHash, setManualTxHash] = useState('');
+  const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [paymentLifecycle, setPaymentLifecycle] = useState<Lifecycle>('IDLE');
+
+  // Treasury State
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
+  const [withdrawDestination, setWithdrawDestination] = useState('');
+  const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
+
+  const safeUsdRate = ngnToUsdRate > 0 ? ngnToUsdRate : FALLBACK_EXCHANGE_RATE;
+
+  // Global Error Silencer Optimization: Only target specific connection interrupts
   useEffect(() => {
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      if (event.reason?.message?.includes('Connection interrupted while trying to subscribe')) {
+      if (event.reason?.message?.includes('Connection interrupted while trying to subscribe') || 
+          event.reason?.name === 'ProviderRpcError') {
         event.preventDefault(); 
       }
     };
@@ -45,36 +131,7 @@ function DashboardContent() {
     return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
   }, []);
 
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [activeWorkspace, setActiveWorkspace] = useState<'RESIDENT' | 'ADMIN' | 'ANALYTICS'>('RESIDENT'); 
-  const [isVerifyingRedirect, setIsVerifyingRedirect] = useState(false);
-  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  
-  const [billAmount, setBillAmount] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(FALLBACK_EXCHANGE_RATE);
-
-  const [viewingReceipt, setViewingReceipt] = useState<any>(null);
-  const [allowanceInput, setAllowanceInput] = useState<string>('5');
-  const [isApproving, setIsApproving] = useState(false);
-  const [localDeductions, setLocalDeductions] = useState<number>(0);
-
-  const [displayLimit, setDisplayLimit] = useState(8);
-  const observer = useRef<IntersectionObserver | null>(null);
-
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const [activeInvoice, setActiveInvoice] = useState<any>(null);
-  const [paymentPortalMode, setPaymentPortalMode] = useState<'FIAT' | 'USDC' | 'VAULT' | null>(null);
-  const [manualTxHash, setManualTxHash] = useState('');
-  const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [paymentLifecycle, setPaymentLifecycle] = useState<'IDLE' | 'PROCESSING' | 'SUCCESS'>('IDLE');
-
-  // Mathematical Safety: Guarantee rate is never zero to prevent render crashes
-  const safeUsdRate = ngnToUsdRate > 0 ? ngnToUsdRate : FALLBACK_EXCHANGE_RATE;
-
-  // --- CONTRACT READS ---
+  // Contract Reads
   const { data: currentAllowanceRaw, refetch: refetchAllowance } = useReadContract({
     address: USDC_CONTRACT_ADDRESS,
     abi: ERC20_ABI,
@@ -89,15 +146,9 @@ function DashboardContent() {
     abi: ERC20_ABI,
     functionName: 'balanceOf',
     args: [TREASURY_ADDRESS as `0x${string}`],
-    query: { refetchInterval: 10000 }
+    query: { refetchInterval: 15000 } // Reduced polling frequency to save RPC cycles
   });
   const treasuryBalance = treasuryBalanceRaw ? Number(treasuryBalanceRaw) / 1000000 : 0;
-
-  // --- TREASURY MANAGEMENT STATE ---
-  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
-  const [withdrawDestination, setWithdrawDestination] = useState('');
-  const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now();
@@ -105,60 +156,7 @@ function DashboardContent() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
-  const handleExecuteWithdrawal = async () => {
-    if (!withdrawDestination || !withdrawDestination.startsWith('0x') || withdrawDestination.length !== 42) {
-      return showToast("Invalid cryptographic destination address.", "error");
-    }
-    if (!withdrawAmountInput || isNaN(Number(withdrawAmountInput)) || Number(withdrawAmountInput) <= 0) {
-      return showToast("Invalid withdrawal liquidity amount.", "error");
-    }
-
-    setIsWithdrawing(true);
-    try {
-      if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
-      
-      const cryptoAmount = parseUnits(withdrawAmountInput, 6);
-      
-      const txHash = await writeContractAsync({
-        address: TREASURY_ADDRESS,
-        abi: TREASURY_ABI,
-        functionName: 'routeToExternal', 
-        args: [withdrawDestination as `0x${string}`, cryptoAmount]
-      });
-
-      showToast("Withdrawal Cryptographically Secured", "success");
-      setIsWithdrawModalOpen(false);
-      setWithdrawAmountInput('');
-      setWithdrawDestination('');
-    } catch (err: any) {
-      showToast(err.shortMessage || err.message, "error");
-    } finally {
-      setIsWithdrawing(false);
-    }
-  };
-
-  const copyToClipboard = (text: string, fieldId: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldId);
-    showToast("Copied to clipboard", "success");
-    setTimeout(() => setCopiedField(null), 2000);
-  };
-
-  const handleSignOut = async () => {
-    await supabase.removeAllChannels(); 
-    await supabase.auth.signOut();
-    router.push('/');
-  };
-
-  const handleCloseModal = () => {
-    setPaymentPortalMode(null);
-    setActiveInvoice(null);
-    setManualTxHash('');
-    setLastConfirmedTx('');
-    setPaymentLifecycle('IDLE');
-  };
-
-  const calculateDynamicAmount = (baseAmount: number, dueDateStr: string) => {
+  const calculateDynamicAmount = useCallback((baseAmount: number, dueDateStr: string) => {
     if (!dueDateStr) return { amount: baseAmount, isLate: false, daysLeft: 0, totalGrace: 5 };
     const dueDate = new Date(dueDateStr).getTime();
     const now = new Date().getTime();
@@ -166,54 +164,54 @@ function DashboardContent() {
     const timeDiff = dueDate - now;
     const daysLeft = Math.max(0, Math.ceil(timeDiff / (1000 * 3600 * 24)));
     return { amount: isLate ? baseAmount * 1.10 : baseAmount, isLate, daysLeft, totalGrace: 5 };
+  }, []);
+
+  // SWR Fetcher
+  const fetchDashboardData = async () => {
+    if (!user?.id) return null;
+
+    // Concurrently fetch to optimize load times
+    const [invoicesRes, ledgerRes, rosterRes] = await Promise.all([
+      supabase.from('tenant_invoices')
+        .select(`id, amount_due, is_paid, payment_method, transaction_reference, paid_at, created_at, monthly_bills ( billing_period, due_date )`)
+        .eq('tenant_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase.rpc('get_global_ledger'),
+      user.is_admin ? supabase.from('tenants').select('*') : Promise.resolve({ data: [] })
+    ]);
+
+    const userInvoices = invoicesRes.data || [];
+    const globalLedger = ledgerRes.data || [];
+    const roster = rosterRes.data || [];
+
+    const pending = userInvoices.filter(inv => !inv.is_paid);
+    const cleared = userInvoices.filter(inv => inv.is_paid);
+
+    const allHistorical = globalLedger.map((row: any) => ({
+      ...row,
+      monthly_bills: { billing_period: row.billing_period, due_date: row.due_date },
+      tenants: { full_name: row.tenant_name, avatar_url: row.tenant_avatar } 
+    }));
+
+    const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+    const currentCycle = allHistorical.filter((inv: any) => {
+        const period = inv.billing_period;
+        const createdMonth = new Date(inv.created_at).toLocaleString('default', { month: 'long', year: 'numeric' });
+        return period === currentMonthName || createdMonth === currentMonthName;
+    });
+
+    const stats = {
+        activeNodes: roster.length > 0 ? roster.filter(t => t.is_active !== false).length : new Set(allHistorical.map((i: any) => i.tenant_id)).size,
+        currentCyclePaid: currentCycle.filter((i: any) => i.is_paid).length,
+        currentCycleTotal: currentCycle.length
+    };
+
+    return { pending, cleared, allHistorical, roster, stats };
   };
 
   const { data: dashboardData, mutate: mutateDashboard, isValidating } = useSWR(
     user ? `dashboard-${user.id}` : null,
-    async () => {
-      const { data: userInvoices, error: invError } = await supabase
-        .from('tenant_invoices')
-        .select(`id, amount_due, is_paid, payment_method, transaction_reference, paid_at, created_at, monthly_bills ( billing_period, due_date )`)
-        .eq('tenant_id', user.id)
-        .order('created_at', { ascending: false });
-
-      let pending: any[] = [], cleared: any[] = [], allHistorical: any[] = [], roster: any[] = [], stats = { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
-
-      if (!invError && userInvoices) {
-        pending = userInvoices.filter(inv => !inv.is_paid);
-        cleared = userInvoices.filter(inv => inv.is_paid);
-      }
-
-      const { data: globalLedger, error: globalErr } = await supabase.rpc('get_global_ledger');
-      
-      if (!globalErr && globalLedger) {
-        allHistorical = globalLedger.map((row: any) => ({
-          ...row,
-          monthly_bills: { billing_period: row.billing_period, due_date: row.due_date },
-          tenants: { full_name: row.tenant_name, avatar_url: row.tenant_avatar } 
-        }));
-      }
-
-      if (user.is_admin) {
-        const { data: tenantsRes } = await supabase.from('tenants').select('*');
-        roster = tenantsRes || [];
-      }
-
-      const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-      const currentCycle = allHistorical.filter(inv => {
-          const period = inv.billing_period;
-          const createdMonth = new Date(inv.created_at).toLocaleString('default', { month: 'long', year: 'numeric' });
-          return period === currentMonthName || createdMonth === currentMonthName;
-      });
-
-      stats = {
-          activeNodes: roster.length > 0 ? roster.filter(t => t.is_active !== false).length : new Set(allHistorical.map(i => i.tenant_id)).size,
-          currentCyclePaid: currentCycle.filter(i => i.is_paid).length,
-          currentCycleTotal: currentCycle.length
-      };
-
-      return { pending, cleared, allHistorical, roster, stats };
-    },
+    fetchDashboardData,
     { revalidateOnFocus: true, keepPreviousData: true }
   );
 
@@ -223,6 +221,7 @@ function DashboardContent() {
   const tenantRoster = dashboardData?.roster || [];
   const adminStats = dashboardData?.stats || { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
+  // System State Recovery
   const verifyPaystackReturn = async (reference: string) => {
     setIsVerifyingRedirect(true);
     try {
@@ -252,11 +251,18 @@ function DashboardContent() {
     }
   };
 
+  // Lifecycle Initialization
   useEffect(() => {
-    fetch('https://open.er-api.com/v6/latest/USD')
-      .then(res => res.json())
-      .then(data => { if (data?.rates?.NGN) setNgnToUsdRate(data.rates.NGN); })
-      .catch(() => console.warn("Oracle baseline offline. Operating on fallback."));
+    const fetchRates = async () => {
+      try {
+        const res = await fetch('https://open.er-api.com/v6/latest/USD');
+        const data = await res.json();
+        if (data?.rates?.NGN) setNgnToUsdRate(data.rates.NGN);
+      } catch (err) {
+        console.warn("Oracle baseline offline. Operating on fallback.");
+      }
+    };
+    fetchRates();
   }, []);
 
   useEffect(() => {
@@ -287,7 +293,7 @@ function DashboardContent() {
       }
 
       const mergedUser = { ...session.user, ...dbUser };
-      setUser(mergedUser);
+      setUser(mergedUser as Tenant);
       if (mergedUser?.is_admin) setActiveWorkspace('ADMIN');
 
       const paystackRef = searchParams.get('reference') || searchParams.get('trxref');
@@ -300,21 +306,21 @@ function DashboardContent() {
 
     initializeAppSession();
     return () => { activeExecution = false; };
-  }, [searchParams]);
+  }, [searchParams, router]);
 
-  // Master Bugfix: Prevent Memory Leak in Realtime Subscriptions
+  // Real-time Event Throttling to prevent rendering DDOS
   useEffect(() => {
     if (!user?.id || loading) return; 
 
+    const debouncedMutate = debounce(() => mutateDashboard(), 1500);
     const channelName = `ledger-flux-${user.id}`;
     
     const websocketChannel = supabase.channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tenant_invoices' }, () => {
-        mutateDashboard(); 
+        debouncedMutate(); 
       })
       .subscribe();
 
-    // Critical Cleanup to prevent React crashing from infinite listeners
     return () => {
       supabase.removeChannel(websocketChannel);
     };
@@ -338,6 +344,7 @@ function DashboardContent() {
     }
   }, [loading, isValidating, clearedInvoices.length]);
 
+  // Memoized Analytics Map/Reduce Operations
   const analytics = useMemo(() => {
     if (!allHistoricalInvoices || allHistoricalInvoices.length === 0) {
       const emptyMonths = Array.from({length: 6}, (_, i) => {
@@ -347,28 +354,28 @@ function DashboardContent() {
       return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, personalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
     }
     
-    const paid = allHistoricalInvoices.filter(i => i.is_paid === true || i.is_paid === 'true');
-    const fiatPaid = paid.filter(i => i.payment_method?.toUpperCase() === 'FIAT');
-    const cryptoPaid = paid.filter(i => i.payment_method?.toUpperCase() === 'USDC' || i.payment_method?.includes('Vault'));
+    const paid = allHistoricalInvoices.filter((i: any) => i.is_paid === true || i.is_paid === 'true');
+    const fiatPaid = paid.filter((i: any) => i.payment_method?.toUpperCase() === 'FIAT');
+    const cryptoPaid = paid.filter((i: any) => i.payment_method?.toUpperCase() === 'USDC' || i.payment_method?.includes('Vault'));
     
-    const totalVolume = paid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
+    const totalVolume = paid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0);
     
     const personalVolume = paid
-      .filter(i => i.tenant_id === user?.id)
-      .reduce((sum, i) => sum + Number(i.amount_due || 0), 0);
+      .filter((i: any) => i.tenant_id === user?.id)
+      .reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0);
 
     const collectionRate = allHistoricalInvoices.length > 0 ? Math.round((paid.length / allHistoricalInvoices.length) * 100) : 0;
 
     let activeAvatars: string[] = [];
     if (tenantRoster && tenantRoster.length > 0) {
        activeAvatars = tenantRoster
-         .filter(t => t.is_active === true) 
-         .map(t => {
+         .filter((t: any) => t.is_active === true) 
+         .map((t: any) => {
            const encodedName = encodeURIComponent(t.full_name || 'Node');
            return t.avatar_url || `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
          });
     } else {
-       const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url; 
+       const currentUserAuthPic = user?.avatar_url; 
        if (currentUserAuthPic) activeAvatars.push(currentUserAuthPic);
     }
 
@@ -377,7 +384,7 @@ function DashboardContent() {
       return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, label: d.toLocaleString('default', { month: 'short' }), networkTotal: 0, personalTotal: 0 };
     }).reverse();
 
-    paid.forEach(inv => {
+    paid.forEach((inv: any) => {
        try {
          const dateToParse = inv.paid_at || inv.created_at;
          if(!dateToParse) return;
@@ -401,16 +408,17 @@ function DashboardContent() {
 
     const recentFeed = [...paid].sort((a, b) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime()).slice(0, 10); 
 
-    return { totalFiat: fiatPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum, i) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, personalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
+    return { totalFiat: fiatPaid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0), totalCrypto: cryptoPaid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0), collectionRate, totalVolume, personalVolume, monthlyData: last6Months, maxMonthValue, recentFeed, activeAvatars };
   }, [allHistoricalInvoices, user, tenantRoster]);
 
+  // Administration Logic
   const handleGenerateBill = async () => {
-    if (!billAmount || isNaN(Number(billAmount))) return showToast("Enter a valid amount.", "error");
+    if (!billAmount || isNaN(Number(billAmount))) return showToast("Enter a valid matrix execution parameter.", "error");
     setIsGenerating(true);
     try {
       const totalAmount = Number(billAmount);
       const { data: activeTenants, error: activeErr } = await supabase.from('tenants').select('*').eq('is_active', true);
-      if (activeErr || !activeTenants?.length) throw new Error("Zero active nodes detected!");
+      if (activeErr || !activeTenants?.length) throw new Error("Zero active nodes detected in the ledger.");
       
       const baseSplit = totalAmount / activeTenants.length;
       const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -418,7 +426,7 @@ function DashboardContent() {
 
       const { data: masterBill } = await supabase.from('monthly_bills').insert({
         billing_period: currentMonth, total_amount_naira: totalAmount, active_tenant_count: activeTenants.length,
-        base_split_amount: baseSplit, due_date: dueDate, created_by: user.id
+        base_split_amount: baseSplit, due_date: dueDate, created_by: user?.id
       }).select().single();
 
       const invoicesToDeploy = activeTenants.map(t => ({ bill_id: masterBill.id, tenant_id: t.id, amount_due: baseSplit }));
@@ -434,13 +442,12 @@ function DashboardContent() {
         })
       });
 
-      const matrixResult = await response.json();
-      
       if (!response.ok) {
-         throw new Error(matrixResult.message || "Gateway rejected notification payload.");
+         const matrixResult = await response.json();
+         throw new Error(matrixResult.message || "Matrix Gateway rejected payload.");
       }
       
-      showToast(`Invoices broadcasted across all nodes.`, "success");
+      showToast(`Settlement invariants broadcasted across all nodes.`, "success");
       setBillAmount('');
       mutateDashboard(); 
     } catch (err: any) {
@@ -460,7 +467,7 @@ function DashboardContent() {
     try {
       const { error } = await supabase.from('tenants').update({ is_active: newState }).eq('id', tenantId);
       if (error) throw error;
-      showToast(`Node ${newState ? 'synchronized' : 'suspended'} successfully.`, "success");
+      showToast(`Node protocol ${newState ? 'synchronized' : 'suspended'} successfully.`, "success");
       mutateDashboard(); 
     } catch (err) {
       showToast("Failed to mutate node state. Reverting.", "error");
@@ -468,6 +475,7 @@ function DashboardContent() {
     }
   };
 
+  // Protocol Logic
   const handleUpdateInvoiceRecord = async (targetInvoiceId: string, method: 'FIAT' | 'USDC', reference: string) => {
     const { error } = await supabase.from('tenant_invoices').update({
       is_paid: true, payment_method: method, transaction_reference: reference, paid_at: new Date().toISOString()
@@ -479,9 +487,9 @@ function DashboardContent() {
       mutateDashboard(); 
     } else {
       if (error.code === '23505') { 
-        showToast("SECURITY LOCK: This transaction hash has already been claimed.", "error");
+        showToast("SECURITY LOCK: This cryptographic transaction hash has already been claimed.", "error");
       } else {
-        showToast("Database rejected state verification.", "error");
+        showToast("Database rejected synchronization state.", "error");
       }
       setPaymentLifecycle('IDLE');
     }
@@ -489,13 +497,15 @@ function DashboardContent() {
 
   const handleVerifyManualCrypto = async () => {
     const cleanedHash = manualTxHash.trim();
-    if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) return showToast("Invalid hash format syntax.", "error");
+    if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) return showToast("Invalid format syntax detected.", "error");
+    if (!activeInvoice) return;
+
     setPaymentLifecycle('PROCESSING');
     
     try {
-      if (!publicClient) throw new Error("RPC Interface failed to mount.");
+      if (!publicClient) throw new Error("RPC Interface failed to map dependencies.");
       const receipt = await publicClient.getTransactionReceipt({ hash: cleanedHash as `0x${string}` });
-      if (receipt.status !== 'success') throw new Error("Transaction state indicates failure on-chain.");
+      if (receipt.status !== 'success') throw new Error("Cryptographic state indicates failure on-chain.");
       
       const expectedHash = keccak256(stringToHex(activeInvoice.id));
       let validPaymentFound = false;
@@ -516,15 +526,16 @@ function DashboardContent() {
         }
       }
 
-      if (!validPaymentFound) throw new Error("No cryptographic match found in Treasury logs.");
+      if (!validPaymentFound) throw new Error("No cryptographic match localized in Treasury logs.");
       await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', cleanedHash);
     } catch (err: any) {
-      showToast(err.shortMessage || err.message || "Failed to verify transaction.", "error");
+      showToast(err.shortMessage || err.message || "Failed to verify execution.", "error");
       setPaymentLifecycle('IDLE');
     }
   };
 
   const handlePayWithConnectedWallet = async () => {
+    if (!activeInvoice) return;
     setPaymentLifecycle('PROCESSING');
     try {
       if (chainId !== TARGET_CHAIN_ID) {
@@ -532,8 +543,11 @@ function DashboardContent() {
       }
       if (!publicClient) throw new Error("RPC Interface offline.");
       
-      const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date);
-      const cryptoValue = parseUnits(((dueInfo.amount / safeUsdRate).toFixed(6)), 6); 
+      const { dueDate } = extractBillData(activeInvoice.monthly_bills);
+      const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, dueDate);
+      
+      const rawUsdcRequired = (dueInfo.amount / safeUsdRate).toFixed(6);
+      const cryptoValue = parseUnits(rawUsdcRequired, 6); 
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
       const currentAllowance = await publicClient.readContract({
@@ -544,7 +558,7 @@ function DashboardContent() {
       });
 
       if (currentAllowance < cryptoValue) {
-        showToast("Step 1: Approving Treasury for secure transfer...", "info");
+        showToast("Step 1: Synchronizing Treasury for transfer execution...", "info");
         const approveHash = await writeContractAsync({
           address: USDC_CONTRACT_ADDRESS,
           abi: ERC20_ABI,
@@ -553,7 +567,7 @@ function DashboardContent() {
         });
         
         await publicClient.waitForTransactionReceipt({ hash: approveHash });
-        showToast("Approval Confirmed. Executing Settlement...", "success");
+        showToast("Authorization Confirmed. Initializing Settlement...", "success");
       }
 
       const txHash = await writeContractAsync({ 
@@ -571,15 +585,17 @@ function DashboardContent() {
   };
 
   const handleInitializeFiatPayment = async () => {
+    if (!activeInvoice || !user) return;
     setPaymentLifecycle('PROCESSING');
     try {
-      const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date);
+      const { dueDate } = extractBillData(activeInvoice.monthly_bills);
+      const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, dueDate);
       localStorage.setItem('pending_fiat_invoice', activeInvoice.id);
 
       const { data, error } = await supabase.functions.invoke('paystack-engine', {
         body: { action: 'initialize_payment', email: user.email, amount: dueInfo.amount, invoiceId: activeInvoice.id }
       });
-      if (error || data?.error) throw new Error(data?.error || "Gateway response exception");
+      if (error || data?.error) throw new Error(data?.error || "Matrix gateway response rejection");
       window.location.href = data.checkout_url;
     } catch (err: any) {
       showToast(err.message, "error");
@@ -587,23 +603,22 @@ function DashboardContent() {
     }
   };
 
-  const handleOneClickSettle = async (invoice: any) => {
-    if (!userAddress) return showToast("Node wallet disconnected", "error");
+  const handleOneClickSettle = async (invoice: Invoice) => {
+    if (!userAddress) return showToast("Protocol wallet disconnected", "error");
     setActiveInvoice(invoice);
     setPaymentPortalMode('VAULT');
     setPaymentLifecycle('PROCESSING');
 
     try {
-        const dueStr = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
-        const exactUsdcDeduction = calculateDynamicAmount(invoice.amount_due, dueStr).amount / safeUsdRate;
+        const { dueDate } = extractBillData(invoice.monthly_bills);
+        const exactUsdcDeduction = calculateDynamicAmount(invoice.amount_due, dueDate).amount / safeUsdRate;
 
         const { data, error } = await supabase.functions.invoke('vault-relayer', {
             body: { invoiceId: invoice.id, userAddress: userAddress, exactUsdcAmount: exactUsdcDeduction }
         });
 
-        if (error || !data?.success) throw new Error(`Relayer Execution Denied: ${error?.message || data?.error || "Unknown reason"}`);
+        if (error || !data?.success) throw new Error(`Execution Vector Denied: ${error?.message || data?.error || "Unknown invariant"}`);
         
-        setLocalDeductions(prev => prev + exactUsdcDeduction);
         setTimeout(() => refetchAllowance(), 2000);
         
         setLastConfirmedTx(data.txHash);
@@ -617,13 +632,12 @@ function DashboardContent() {
   };
 
   const handleApproveAllowance = async () => {
-    if (!allowanceInput || isNaN(Number(allowanceInput)) || Number(allowanceInput) <= 0) return showToast("Enter a valid USDC amount", "error");
+    if (!allowanceInput || isNaN(Number(allowanceInput)) || Number(allowanceInput) <= 0) return showToast("Invalid numeric format detected", "error");
     setIsApproving(true);
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
       await writeContractAsync({ address: USDC_CONTRACT_ADDRESS, abi: ERC20_ABI, functionName: 'approve', args: [TREASURY_ADDRESS, parseUnits(allowanceInput, 6)] });
-      showToast("Web3 Vault Allowance Confirmed", "success");
-      setLocalDeductions(0);
+      showToast("Web3 Vault Attestation Secured", "success");
       setTimeout(() => refetchAllowance(), 4000); 
     } catch (err: any) {
       showToast(err.shortMessage || err.message, "error");
@@ -633,9 +647,61 @@ function DashboardContent() {
     }
   };
 
-  const resolvedUserName = user?.user_metadata?.full_name || user?.full_name || "Compound Node";
-  const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;  
-  const resolvedAvatarUrl = user?.avatar_url || authPhoto || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
+  const handleExecuteWithdrawal = async () => {
+    if (!withdrawDestination || !withdrawDestination.startsWith('0x') || withdrawDestination.length !== 42) {
+      return showToast("Invalid cryptographic vector address.", "error");
+    }
+    if (!withdrawAmountInput || isNaN(Number(withdrawAmountInput)) || Number(withdrawAmountInput) <= 0) {
+      return showToast("Invalid extraction liquidity format.", "error");
+    }
+
+    setIsWithdrawing(true);
+    try {
+      if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
+      
+      const cryptoAmount = parseUnits(withdrawAmountInput, 6);
+      
+      await writeContractAsync({
+        address: TREASURY_ADDRESS,
+        abi: TREASURY_ABI,
+        functionName: 'routeToExternal', 
+        args: [withdrawDestination as `0x${string}`, cryptoAmount]
+      });
+
+      showToast("Extraction Payload Cryptographically Secured", "success");
+      setIsWithdrawModalOpen(false);
+      setWithdrawAmountInput('');
+      setWithdrawDestination('');
+    } catch (err: any) {
+      showToast(err.shortMessage || err.message, "error");
+    } finally {
+      setIsWithdrawing(false);
+    }
+  };
+
+  const copyToClipboard = (text: string, fieldId: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldId);
+    showToast("Data copied to system clipboard", "success");
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleSignOut = async () => {
+    await supabase.removeAllChannels(); 
+    await supabase.auth.signOut();
+    router.push('/');
+  };
+
+  const handleCloseModal = () => {
+    setPaymentPortalMode(null);
+    setActiveInvoice(null);
+    setManualTxHash('');
+    setLastConfirmedTx('');
+    setPaymentLifecycle('IDLE');
+  };
+
+  const resolvedUserName = user?.full_name || "Compound Node";
+  const resolvedAvatarUrl = user?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(resolvedUserName)}&background=0F172A&color=3B82F6&bold=true`;
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     e.currentTarget.src = `https://ui-avatars.com/api/?name=Node&background=111111&color=444444&bold=true`;
@@ -762,20 +828,20 @@ function DashboardContent() {
                        </div>
                        <div className="max-h-[300px] overflow-y-auto custom-scrollbar p-2">
                           {pendingActionInvoices.length > 0 ? (
-                             pendingActionInvoices.map((inv, idx) => {
-                               const dueStr = Array.isArray(inv.monthly_bills) ? inv.monthly_bills[0]?.due_date : inv.monthly_bills?.due_date;
-                               const { isLate } = calculateDynamicAmount(inv.amount_due, dueStr);
-                               return (
+                             pendingActionInvoices.map((inv: any, idx: number) => {
+                              const { dueDate, period } = extractBillData(inv.monthly_bills);
+                              const { isLate } = calculateDynamicAmount(inv.amount_due, dueDate);
+                              return (
                                  <div key={idx} className={`p-3 border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors ${isLate ? 'border-l-2 border-l-red-500' : 'border-l-2 border-l-blue-500'}`}>
                                     <p className="text-[10px] text-white font-mono uppercase">{isLate ? 'Penalty Deployed' : 'New Invoice Generated'}</p>
                                     <p className="text-[9px] text-neutral-500 font-mono mt-1 leading-relaxed">
-                                       {isLate ? '10% late fee applied. Immediate settlement required.' : 'A new network utility bill is ready for signature.'}
+                                       {isLate ? '10% late penalty synchronized. Immediate settlement required.' : 'A new network utility bill requires cryptographic signature.'}
                                     </p>
                                  </div>
                                )
                              })
                           ) : (
-                             <div className="p-6 text-center text-[10px] font-mono text-neutral-600 uppercase">System state quiet</div>
+                             <div className="p-6 text-center text-[10px] font-mono text-neutral-600 uppercase">System state synchronized</div>
                           )}
                        </div>
                     </div>
@@ -798,18 +864,18 @@ function DashboardContent() {
             </div>
           </div>
 
-          {/* === MODULE: COMMAND CENTER === */}
+          {/* MODULE RENDERS */}
           {activeWorkspace === 'ADMIN' && user?.is_admin && (
             <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500">
-              
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                {/* Broadcast UI */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 h-fit shadow-2xl relative overflow-hidden group hover:border-white/10 transition-all duration-500">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider mb-2 relative z-10 flex items-center gap-2">
                       Broadcast Invoices
                       <span className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[8px] px-2 py-0.5 rounded-full">Cron Bound</span>
                   </h2>
-                  <p className="text-[10px] md:text-[11px] text-neutral-400 mb-8 font-mono leading-relaxed relative z-10 md:pr-8">Calculates base splits and propagates to all active nodes. Suspended nodes are excluded from the matrix.</p>
+                  <p className="text-[10px] md:text-[11px] text-neutral-400 mb-8 font-mono leading-relaxed relative z-10 md:pr-8">Calculates base splits and propagates to all active nodes. Suspended nodes are excluded from the matrix execution.</p>
                   
                   <div className="space-y-6 relative z-10">
                     <div className="relative border-b border-white/10 focus-within:border-blue-500/50 transition-colors py-2">
@@ -822,6 +888,7 @@ function DashboardContent() {
                   </div>
                 </div>
 
+                {/* Tracking UI */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-white/10 transition-all duration-500">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <div>
@@ -848,11 +915,12 @@ function DashboardContent() {
                 </div>
               </div>
 
+              {/* Roster UI */}
               <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
                 <div className="flex justify-between items-center border-b border-white/[0.04] pb-5 mb-5 relative z-10">
                    <div>
                      <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider flex items-center gap-2">
-                        Network Node Roster
+                       Network Node Roster
                      </h2>
                      <p className="text-[9px] md:text-[10px] text-neutral-500 font-mono mt-1 uppercase tracking-widest">Active nodes receive broadcast matrices. Suspended nodes remain in history but are ignored by routing.</p>
                    </div>
@@ -862,7 +930,7 @@ function DashboardContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 relative z-10">
-                   {tenantRoster.length > 0 ? tenantRoster.map((tenant) => {
+                   {tenantRoster.length > 0 ? tenantRoster.map((tenant: any) => {
                       const encodedName = encodeURIComponent(tenant.full_name || 'Network Node');
                       const fallback = `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
                       const avatar = tenant.avatar_url || fallback;
@@ -896,7 +964,7 @@ function DashboardContent() {
                    )}
                 </div>
 
-                {/* === MODULE: GLASS SAFE TREASURY MANAGEMENT === */}
+                {/* Treasury Sub-Module */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-500 shadow-2xl col-span-1 lg:col-span-2 xl:col-span-1 mt-6">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   
@@ -921,7 +989,7 @@ function DashboardContent() {
                     
                     <button onClick={() => setIsWithdrawModalOpen(true)} className="w-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white py-4 rounded-xl font-bold text-[11px] md:text-xs font-mono uppercase tracking-wider transition-all shadow-[0_0_20px_rgba(255,255,255,0.02)] flex items-center justify-center gap-2">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
-                      Initialize Withdrawal
+                      Initialize Extraction Payload
                     </button>
                   </div>
                 </div>
@@ -930,7 +998,7 @@ function DashboardContent() {
             </div>
           )}
 
-          {/* === MODULE: GOOGLE/DUNE-GRADE DATA TERMINAL === */}
+          {/* MODULE: ANALYTICS TERMINAL */}
           {activeWorkspace === 'ANALYTICS' && (
             <div className="space-y-6 animate-in fade-in duration-500">
                
@@ -1077,7 +1145,7 @@ function DashboardContent() {
                           const isCurrentUser = inv.tenant_id === user?.id;
                           
                           const nodeUserName = user?.is_admin || isCurrentUser ? (inv.tenants?.full_name || 'Network Node') : `Node 0x${inv.tenant_id?.slice(0, 4)}...`;
-                          const currentUserAuthPic = user?.user_metadata?.picture || user?.user_metadata?.avatar_url || user?.raw_user_metadata?.picture;
+                          const currentUserAuthPic = user?.avatar_url;
                           const nodeAvatar = isCurrentUser ? (currentUserAuthPic || inv.tenants?.avatar_url) : inv.tenants?.avatar_url;
                           
                           const encodedName = encodeURIComponent(inv.tenants?.full_name || 'Node');
@@ -1114,7 +1182,7 @@ function DashboardContent() {
             </div>
           )}
 
-          {/* === MODULE: RESIDENT WORKSPACE === */}
+          {/* MODULE: RESIDENT WORKSPACE */}
           {activeWorkspace === 'RESIDENT' && (
             <div className="animate-in fade-in duration-500 space-y-8">
               
@@ -1191,9 +1259,8 @@ function DashboardContent() {
                   </h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 md:gap-6">
                     {pendingActionInvoices.map((invoice: any) => {
-                      const dueStr = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
-                      const period = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.billing_period : invoice.monthly_bills?.billing_period;
-                      const { amount, isLate, daysLeft, totalGrace } = calculateDynamicAmount(invoice.amount_due, dueStr);
+                      const { dueDate, period } = extractBillData(invoice.monthly_bills);
+                      const { amount, isLate, daysLeft, totalGrace } = calculateDynamicAmount(invoice.amount_due, dueDate);
                       const usdValue = (amount / safeUsdRate).toFixed(2);
                       
                       const isVaultReady = baseAllowanceUSDC >= Number(usdValue);
@@ -1253,7 +1320,7 @@ function DashboardContent() {
                   <h3 className="text-[10px] md:text-[11px] font-mono text-neutral-400 uppercase tracking-widest mb-4 md:mb-6">Settled Invariant Logs</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {clearedInvoices.slice(0, displayLimit).map((invoice: any) => {
-                      const period = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
+                      const { dueDate: period } = extractBillData(invoice.monthly_bills);
                       return (
                         <div 
                           key={invoice.id} 
@@ -1328,7 +1395,7 @@ function DashboardContent() {
             <div className="space-y-4 border-t border-white/10 pt-6 font-mono text-[10px] relative z-10">
               <div className="flex justify-between items-center p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase">Billing Cycle</span>
-                <span className="text-white font-bold">{Array.isArray(viewingReceipt.monthly_bills) ? viewingReceipt.monthly_bills[0]?.billing_period : viewingReceipt.monthly_bills?.billing_period}</span>
+                <span className="text-white font-bold">{extractBillData(viewingReceipt.monthly_bills).period}</span>
               </div>
               <div className="flex justify-between items-center p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase">Clearance Date</span>
@@ -1375,7 +1442,7 @@ function DashboardContent() {
                      {paymentPortalMode === 'FIAT' ? 'Fiat Wire Gateway' : paymentPortalMode === 'VAULT' ? 'Vault Auto-Relayer' : 'ERC20 Routing Engine'}
                   </h3>
                   <p className="text-xs md:text-sm font-bold text-white font-mono uppercase mt-1">
-                    {Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date}
+                    {extractBillData(activeInvoice.monthly_bills).dueDate}
                   </p>
                 </div>
                 <button onClick={handleCloseModal} className="text-neutral-500 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-full transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
@@ -1551,13 +1618,11 @@ function DashboardContent() {
             </div>
 
             <div className="space-y-6">
-              {/* Balance Display */}
               <div className="bg-emerald-500/5 border border-emerald-500/20 p-5 rounded-2xl flex justify-between items-center">
                 <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">Available Capacity</span>
                 <span className="text-lg font-mono font-bold text-emerald-400">${treasuryBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDC</span>
               </div>
 
-              {/* Amount Input */}
               <div className="space-y-2">
                 <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1">Extraction Amount (USDC)</label>
                 <div className="relative focus-within:shadow-[0_0_20px_rgba(16,185,129,0.1)] transition-all">
@@ -1578,7 +1643,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-        {/* Destination Address Input */}
         <div className="space-y-2">
           <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1 flex justify-between">
             <span>Destination Vector</span>
@@ -1598,7 +1662,6 @@ function DashboardContent() {
           </div>
         </div>
 
-        {/* Warning & Execution */}
         <div className="pt-4">
           <p className="text-[8px] text-neutral-500 font-mono uppercase tracking-widest leading-relaxed mb-4 text-center">
             Verification Warning: Ensure the destination vector resides on the Base Mainnet. Funds routed to unsupported networks will be permanently lost.
