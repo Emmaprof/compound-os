@@ -193,15 +193,11 @@ function DashboardContent() {
   }, []);
 
   // ============================================================
-  // EXPORT RECEIPT (Secured & Logo Integrated)
-  // ============================================================
-  // ============================================================
-  // EXPORT RECEIPT (Strict Original Enterprise Layout)
+  // EXPORT RECEIPT (Modal UI -> Print Layout)
   // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
     
-    // Construct dynamic base URL for local image resolution
     const baseUrl = window.location.origin;
     
     // Safely extract billing period
@@ -222,208 +218,264 @@ function DashboardContent() {
         ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) 
         : '—';
 
+    // Determine badge styling based on routing method
+    const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
+    const badgeColor = isWeb3 ? '#3b82f6' : '#a855f7';
+    const badgeBg = isWeb3 ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)';
+    const badgeBorder = isWeb3 ? 'rgba(59,130,246,0.2)' : 'rgba(168,85,247,0.2)';
+
     const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>CompoundOS | Enterprise Utility Node</title>
+  <title>CompoundOS | Settlement Proof</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 210mm;
       min-height: 297mm;
-      background: #ffffff !important; /* Force white background for printing */
+      background: #ffffff !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-family: 'JetBrains Mono', monospace;
       color: #000000;
     }
 
-    /* Container perfectly sized for A4 */
     .page {
       width: 210mm;
       min-height: 297mm;
       background: #ffffff;
+      padding: 60px 80px;
       position: relative;
-      padding: 40px;
     }
 
-    /* Print scaling to match the browser screenshot exactly */
-    .content-wrapper {
-      transform-origin: top left;
-      /* The screenshot looks like a slightly zoomed out view, this scale helps match the proportions */
-      transform: scale(0.9); 
-      width: 111%; /* Compensate for scale */
+    /* Container matching modal width relative to A4 */
+    .modal-container {
+      width: 100%;
+      max-width: 500px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 24px;
+      padding: 40px;
+      position: relative;
+      /* Subtle shadow to mimic the elevation in light mode */
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.05);
     }
 
     /* HEADER */
     .header-logo-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: -20px; /* Pull it slightly into the header space */
+      position: relative;
+      z-index: 10;
+    }
+
+    .header-content {
       margin-bottom: 40px;
     }
 
-    .header-text {
-      margin-bottom: 24px;
-    }
-    
-    .status-badge {
-      display: inline-block;
-      border: 1px solid #10b981;
-      color: #10b981;
-      padding: 6px 12px;
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-    }
-
-    .audited-record {
-      color: #10b981;
-      font-size: 14px;
-      font-weight: 500;
-      letter-spacing: 0.5px;
-    }
-
-    /* MAIN CONTENT GRID */
-    .main-grid {
+    .title-row {
       display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-top: 40px;
-    }
-
-    /* LEFT COLUMN - DATA PAIRS */
-    .data-column {
-      display: flex;
-      flex-direction: column;
-      gap: 32px;
-      max-width: 60%;
-    }
-
-    .data-group {
-      display: flex;
-      flex-direction: column;
+      align-items: center;
       gap: 8px;
     }
 
-    .data-label {
-      color: #6b7280;
-      font-size: 13px;
-      font-weight: 600;
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: #10b981;
+      border-radius: 50%;
+    }
+
+    .header-title {
+      font-size: 14px;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .data-value {
-      font-size: 16px;
-      font-weight: 500;
+      letter-spacing: 1px;
       color: #111827;
-      word-break: break-all;
     }
 
-    /* RIGHT COLUMN - VALUE */
-    .value-column {
-      text-align: right;
-      min-width: 200px;
+    .header-subtitle {
+      font-size: 10px;
+      color: #6b7280;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-top: 4px;
+    }
+
+    /* VALUE EXTRACT */
+    .value-section {
+      text-align: center;
+      margin-bottom: 40px;
     }
 
     .value-label {
-      color: #6b7280;
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 11px;
+      color: #10b981;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 1.5px;
       margin-bottom: 8px;
+      display: block;
     }
 
     .value-amount {
-      font-size: 48px;
+      font-size: 56px;
       font-weight: 700;
       color: #111827;
+      letter-spacing: -2px;
       line-height: 1;
-      letter-spacing: -1px;
     }
 
-    /* BUTTON (Visual only for print fidelity if needed) */
-    .export-btn {
-      display: inline-flex;
+    /* DATA ROWS (Inverted from Dark Mode) */
+    .data-list {
+      border-top: 1px solid #e5e7eb;
+      padding-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .data-row {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 8px;
-      background: #f3f4f6;
-      border: 1px solid #e5e7eb;
-      padding: 10px 16px;
+      padding: 14px 16px;
+      background: #f9fafb;
+      border: 1px solid #f3f4f6;
+      border-radius: 12px;
+    }
+
+    .data-label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+    }
+
+    .data-val {
+      font-size: 11px;
+      color: #111827;
+      font-weight: 700;
+    }
+
+    .route-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
       border-radius: 6px;
-      color: #374151;
-      font-size: 14px;
-      font-weight: 500;
-      margin-top: 60px;
+      background: ${badgeBg};
+      color: ${badgeColor};
+      border: 1px solid ${badgeBorder};
+    }
+
+    /* HASH BLOCK */
+    .hash-container {
+      padding: 14px 16px;
+      background: #f9fafb;
+      border: 1px solid #f3f4f6;
+      border-radius: 12px;
+    }
+
+    .hash-label {
+      font-size: 11px;
+      color: #6b7280;
+      text-transform: uppercase;
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .hash-box {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #ffffff;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      gap: 12px;
+    }
+
+    .hash-value {
+      font-size: 10px;
+      color: #10b981;
+      font-weight: 700;
+      word-break: break-all;
+    }
+
+    .basescan-link {
+      color: #3b82f6;
+      text-decoration: none;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
     }
     
-    .check-icon {
-      color: #10b981;
-      font-weight: bold;
+    .basescan-link svg {
+      width: 14px;
+      height: 14px;
     }
 
     @media print {
-      html, body {
-        background: #ffffff !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      .page { padding: 20mm; } /* Standard print margins */
-      .export-btn { display: none !important; } /* Hide the button when actually printing */
+      html, body { background: #ffffff !important; }
+      .page { padding: 40px; }
+      .modal-container { box-shadow: none; border: 1px solid #d1d5db; }
     }
   </style>
 </head>
 <body>
 <div class="page">
-  <div class="content-wrapper">
+  <div class="modal-container">
+    
     <div class="header-logo-row">
-      <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover;" onerror="this.style.display='none'" />
+      <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 12px; object-fit: cover; border: 1px solid #e5e7eb;" onerror="this.style.display='none'" />
     </div>
 
-    <div class="header-text">
-      <div class="status-badge">OFFICIAL SETTLEMENT PROOF</div>
-      <div class="audited-record">COMPOUNDOS AUDITED RECORD</div>
+    <div class="header-content">
+      <div class="title-row">
+        <div class="status-dot"></div>
+        <div class="header-title">Official Settlement Proof</div>
+      </div>
+      <div class="header-subtitle">CompoundOS Audited Record</div>
     </div>
 
-    <div class="main-grid">
+    <div class="value-section">
+      <span class="value-label">Value Extinguished</span>
+      <div class="value-amount">₦${amountDue}</div>
+    </div>
+
+    <div class="data-list">
+      <div class="data-row">
+        <span class="data-label">Billing Cycle</span>
+        <span class="data-val">${billingPeriod}</span>
+      </div>
       
-      <div class="data-column">
-        <div class="data-group">
-          <div class="data-label">BILLING CYCLE</div>
-          <div class="data-value">${billingPeriod}</div>
-        </div>
-        
-        <div class="data-group">
-          <div class="data-label">CLEARANCE DATE</div>
-          <div class="data-value">${clearanceDate}</div>
-        </div>
-
-        <div class="data-group">
-          <div class="data-label">ROUTING METHOD</div>
-          <div class="data-value">${methodStr}</div>
-        </div>
-
-        <div class="data-group">
-          <div class="data-label">CRYPTOGRAPHIC ATTESTATION HASH</div>
-          <div class="data-value">${cleanTxRef}</div>
-        </div>
+      <div class="data-row">
+        <span class="data-label">Clearance Date</span>
+        <span class="data-val">${clearanceDate}</span>
       </div>
 
-      <div class="value-column">
-        <div class="value-label">VALUE EXTINGUISHED</div>
-        <div class="value-amount">₦${amountDue}</div>
+      <div class="data-row">
+        <span class="data-label">Routing Method</span>
+        <span class="route-badge">${methodStr}</span>
       </div>
 
-    </div>
-
-    <div class="export-btn no-print">
-      EXPORT PDF STATEMENT <span class="check-icon">✓</span>
+      <div class="hash-container">
+        <span class="hash-label">Cryptographic Attestation Hash</span>
+        <div class="hash-box">
+          <span class="hash-value">${cleanTxRef}</span>
+          ${isWeb3 && rawTxRef.startsWith('0x') ? `
+            <a href="https://basescan.org/tx/${cleanTxRef}" target="_blank" rel="noreferrer" class="basescan-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            </a>
+          ` : ''}
+        </div>
+      </div>
     </div>
 
   </div>
