@@ -195,6 +195,9 @@ function DashboardContent() {
   // ============================================================
   // EXPORT RECEIPT (Modal UI -> Print Layout)
   // ============================================================
+  // ============================================================
+  // EXPORT RECEIPT (Perfect Center & Emerald Edge)
+  // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
     
@@ -233,11 +236,17 @@ function DashboardContent() {
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
 
+    /* Strips browser default margins to allow perfect centering */
+    @page {
+      size: A4;
+      margin: 0; 
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 210mm;
-      min-height: 297mm;
+      height: 297mm;
       background: #ffffff !important;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
@@ -246,33 +255,35 @@ function DashboardContent() {
       color: #000000;
     }
 
+    /* Flexbox grid forces absolute center alignment */
     .page {
       width: 210mm;
-      min-height: 297mm;
+      height: 297mm;
       background: #ffffff;
-      padding: 60px 80px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
       position: relative;
     }
 
-    /* Container matching modal width relative to A4 */
+    /* Container matching modal width */
     .modal-container {
       width: 100%;
       max-width: 500px;
-      margin: 0 auto;
       background: #ffffff;
-      border: 1px solid #e5e7eb;
+      /* Removed grey border/shadow, added exact emerald edge */
+      border: 1.5px solid #10b981; 
+      box-shadow: none;
       border-radius: 24px;
       padding: 40px;
       position: relative;
-      /* Subtle shadow to mimic the elevation in light mode */
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.05);
     }
 
     /* HEADER */
     .header-logo-row {
       display: flex;
       justify-content: flex-end;
-      margin-bottom: -20px; /* Pull it slightly into the header space */
+      margin-bottom: -20px; 
       position: relative;
       z-index: 10;
     }
@@ -333,9 +344,9 @@ function DashboardContent() {
       line-height: 1;
     }
 
-    /* DATA ROWS (Inverted from Dark Mode) */
+    /* DATA ROWS */
     .data-list {
-      border-top: 1px solid #e5e7eb;
+      border-top: 1px solid rgba(16,185,129,0.1);
       padding-top: 24px;
       display: flex;
       flex-direction: column;
@@ -423,8 +434,14 @@ function DashboardContent() {
 
     @media print {
       html, body { background: #ffffff !important; }
-      .page { padding: 40px; }
-      .modal-container { box-shadow: none; border: 1px solid #d1d5db; }
+      .page { 
+        padding: 0;
+        margin: 0;
+      }
+      .modal-container { 
+        box-shadow: none !important;
+        border: 1.5px solid #10b981 !important;
+      }
     }
   </style>
 </head>
@@ -433,7 +450,7 @@ function DashboardContent() {
   <div class="modal-container">
     
     <div class="header-logo-row">
-      <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 12px; object-fit: cover; border: 1px solid #e5e7eb;" onerror="this.style.display='none'" />
+      <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(16,185,129,0.2);" onerror="this.style.display='none'" />
     </div>
 
     <div class="header-content">
