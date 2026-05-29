@@ -192,11 +192,9 @@ function DashboardContent() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
+  
   // ============================================================
-  // EXPORT RECEIPT (Modal UI -> Print Layout)
-  // ============================================================
-  // ============================================================
-  // EXPORT RECEIPT (Perfect Center & Emerald Edge)
+  // EXPORT RECEIPT (Perfect Center, Emerald Edge & Dual-Hash Logic)
   // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
@@ -214,15 +212,19 @@ function DashboardContent() {
     const billingPeriod = escapeHTML(rawBillingPeriod);
     const methodStr = escapeHTML(receipt.payment_method) || 'FIAT';
     const amountDue = Number(receipt.amount_due).toLocaleString();
-    const rawTxRef = receipt.transaction_reference || '—';
+    
+    // 1. Determine routing method
+    const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
+    
+    // 2. ENTERPRISE UI FIX: Use UUID for FIAT, actual hex hash for USDC
+    const rawTxRef = isWeb3 ? (receipt.transaction_reference || '—') : receipt.id;
     const cleanTxRef = escapeHTML(rawTxRef);
     
     const clearanceDate = receipt.paid_at 
         ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) 
         : '—';
 
-    // Determine badge styling based on routing method
-    const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
+    // 3. Determine badge styling
     const badgeColor = isWeb3 ? '#3b82f6' : '#a855f7';
     const badgeBg = isWeb3 ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)';
     const badgeBorder = isWeb3 ? 'rgba(59,130,246,0.2)' : 'rgba(168,85,247,0.2)';
@@ -236,7 +238,6 @@ function DashboardContent() {
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
 
-    /* Strips browser default margins to allow perfect centering */
     @page {
       size: A4;
       margin: 0; 
@@ -255,7 +256,6 @@ function DashboardContent() {
       color: #000000;
     }
 
-    /* Flexbox grid forces absolute center alignment */
     .page {
       width: 210mm;
       height: 297mm;
@@ -266,12 +266,10 @@ function DashboardContent() {
       position: relative;
     }
 
-    /* Container matching modal width */
     .modal-container {
       width: 100%;
       max-width: 500px;
       background: #ffffff;
-      /* Removed grey border/shadow, added exact emerald edge */
       border: 1.5px solid #10b981; 
       box-shadow: none;
       border-radius: 24px;
@@ -279,7 +277,6 @@ function DashboardContent() {
       position: relative;
     }
 
-    /* HEADER */
     .header-logo-row {
       display: flex;
       justify-content: flex-end;
@@ -321,7 +318,6 @@ function DashboardContent() {
       margin-top: 4px;
     }
 
-    /* VALUE EXTRACT */
     .value-section {
       text-align: center;
       margin-bottom: 40px;
@@ -344,7 +340,6 @@ function DashboardContent() {
       line-height: 1;
     }
 
-    /* DATA ROWS */
     .data-list {
       border-top: 1px solid rgba(16,185,129,0.1);
       padding-top: 24px;
@@ -385,7 +380,6 @@ function DashboardContent() {
       border: 1px solid ${badgeBorder};
     }
 
-    /* HASH BLOCK */
     .hash-container {
       padding: 14px 16px;
       background: #f9fafb;
@@ -601,15 +595,12 @@ function DashboardContent() {
   const adminStats = dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
   const verifyPaystackReturn = useCallback(async (reference: string) => {
-    // 1. Instantly sanitize the URL to maintain a clean, parameter-free routing state
     window.history.replaceState({}, document.title, window.location.pathname);
     
     try {
-      // 2. Retrieve the intent ID from secure local storage
       const pendingId = localStorage.getItem('pending_fiat_invoice');
       if (!pendingId) return;
 
-      // 3. Fetch the exact, current state of the invoice from the database
       const { data: matchedInvoice } = await supabase
         .from('tenant_invoices')
         .select('*, monthly_bills(*)')
@@ -620,12 +611,12 @@ function DashboardContent() {
 
       let finalInvoice = matchedInvoice;
 
-      // 4. Fallback execution: If the Paystack webhook hasn't fired yet, update state directly
       if (!matchedInvoice.is_paid) {
         const { data: updatedInvoice, error } = await supabase.from('tenant_invoices').update({
           is_paid: true,
           payment_method: 'FIAT',
-          transaction_reference: reference,
+          // SECURITY: Store the true Paystack reference in the DB for auditing
+          transaction_reference: reference, 
           paid_at: new Date().toISOString()
         }).eq('id', pendingId).select('*, monthly_bills(*)').single();
 
@@ -634,18 +625,16 @@ function DashboardContent() {
         }
       }
 
-      // 5. STATE OVERRIDE: Force the success matrix to render utilizing the verified data
       setActiveInvoice(finalInvoice);
       setPaymentPortalMode('FIAT');
-      setLastConfirmedTx(finalInvoice.transaction_reference || reference);
+      // AESTHETIC OVERRIDE: Force the UI to display the UUID for Fiat transactions
+      setLastConfirmedTx(finalInvoice.id); 
       setPaymentLifecycle('SUCCESS');
 
-      // 6. Purge the temporary execution intent
       localStorage.removeItem('pending_fiat_invoice');
     } catch (err) {
       console.error('State Recovery Error:', err);
     } finally {
-      // 7. Trigger SWR revalidation to sync the UI ledger
       mutateDashboard();
     }
   }, [mutateDashboard]);
@@ -2014,10 +2003,14 @@ function DashboardContent() {
                   {viewingReceipt.payment_method || '—'}
                 </span>
               </div>
+              
               <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase block mb-2">Cryptographic Attestation Hash</span>
                 <div className="flex items-center justify-between gap-3 bg-[#000] p-2 rounded-lg border border-white/5">
-                  <span className="text-emerald-400 text-[9px] truncate select-all">{viewingReceipt.transaction_reference || '—'}</span>
+                  <span className="text-emerald-400 text-[9px] truncate select-all">
+                    {/* ENTERPRISE UI FIX: Render UUID for FIAT, Hex Hash for Web3 */}
+                    {viewingReceipt.payment_method === 'FIAT' ? viewingReceipt.id : (viewingReceipt.transaction_reference || '—')}
+                  </span>
                   {(viewingReceipt.payment_method === 'USDC' || viewingReceipt.payment_method?.includes('Vault')) && viewingReceipt.transaction_reference?.startsWith('0x') && (
                     <a
                       href={`https://basescan.org/tx/${viewingReceipt.transaction_reference}`}
