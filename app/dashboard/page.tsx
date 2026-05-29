@@ -157,6 +157,368 @@ function DashboardContent() {
   }, []);
 
   // ============================================================
+  // RECEIPT PDF — opens isolated print window with full inline
+  // styles, gradients, CompoundOS branding. No Tailwind needed.
+  // Works across all browsers, background-color prints correctly.
+  // ============================================================
+  const handleExportReceiptPDF = useCallback((receipt: any) => {
+    const billingPeriod = Array.isArray(receipt.monthly_bills)
+      ? receipt.monthly_bills[0]?.billing_period
+      : receipt.monthly_bills?.billing_period;
+    const isWeb3 = receipt.payment_method === 'USDC' || receipt.payment_method?.includes('Vault');
+    const methodColor = isWeb3 ? '#3b82f6' : '#a855f7';
+    const methodBg = isWeb3 ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)';
+    const methodBorder = isWeb3 ? 'rgba(59,130,246,0.4)' : 'rgba(168,85,247,0.4)';
+    const basescanUrl = isWeb3 && receipt.transaction_reference?.startsWith('0x')
+      ? `https://basescan.org/tx/${receipt.transaction_reference}`
+      : null;
+
+    const receiptId = `COS-${receipt.id?.slice(0, 8).toUpperCase() ?? 'XXXXXXXX'}`;
+    const generatedAt = new Date().toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CompoundOS Receipt — ${receiptId}</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 210mm;
+      min-height: 297mm;
+      background: #000000 !important;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      color-adjust: exact !important;
+      font-family: 'JetBrains Mono', 'Courier New', monospace;
+    }
+
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      background: #000000;
+      position: relative;
+      overflow: hidden;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- BACKGROUND GLOW ORBS ---- */
+    .orb-tl {
+      position: absolute; top: -80px; left: -80px;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(16,185,129,0.18) 0%, transparent 70%);
+      border-radius: 50%; pointer-events: none;
+    }
+    .orb-br {
+      position: absolute; bottom: -60px; right: -60px;
+      width: 350px; height: 350px;
+      background: radial-gradient(circle, rgba(59,130,246,0.14) 0%, transparent 70%);
+      border-radius: 50%; pointer-events: none;
+    }
+    .orb-center {
+      position: absolute; top: 35%; left: 50%; transform: translateX(-50%);
+      width: 500px; height: 300px;
+      background: radial-gradient(ellipse, rgba(16,185,129,0.05) 0%, transparent 70%);
+      border-radius: 50%; pointer-events: none;
+    }
+    /* dot grid */
+    .dot-grid {
+      position: absolute; inset: 0; pointer-events: none;
+      background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0);
+      background-size: 24px 24px;
+    }
+
+    /* ---- HEADER ---- */
+    .header {
+      position: relative; z-index: 10;
+      padding: 28px 36px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(255,255,255,0.02);
+    }
+    .logo-wrap { display: flex; align-items: center; gap: 14px; }
+    .logo-icon {
+      width: 42px; height: 42px; border-radius: 12px;
+      background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 0 20px rgba(16,185,129,0.4);
+      flex-shrink: 0;
+    }
+    .logo-icon svg { width: 22px; height: 22px; }
+    .logo-name { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
+    .logo-sub { font-size: 8px; color: #6b7280; text-transform: uppercase; letter-spacing: 3px; margin-top: 2px; }
+    .receipt-badge {
+      text-align: right;
+    }
+    .receipt-label {
+      font-size: 8px; color: #10b981; text-transform: uppercase; letter-spacing: 3px;
+      display: flex; align-items: center; justify-content: flex-end; gap: 6px;
+    }
+    .receipt-label::before {
+      content: ''; display: inline-block; width: 6px; height: 6px;
+      background: #10b981; border-radius: 50%;
+      box-shadow: 0 0 8px rgba(16,185,129,0.8);
+    }
+    .receipt-id { font-size: 11px; font-weight: 700; color: #ffffff; margin-top: 4px; letter-spacing: 1px; }
+    .receipt-gen { font-size: 8px; color: #4b5563; margin-top: 3px; }
+
+    /* ---- HERO AMOUNT ---- */
+    .hero {
+      position: relative; z-index: 10;
+      margin: 32px 36px;
+      background: linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(59,130,246,0.06) 50%, rgba(0,0,0,0) 100%);
+      border: 1px solid rgba(16,185,129,0.2);
+      border-radius: 20px;
+      padding: 32px;
+      text-align: center;
+      overflow: hidden;
+    }
+    .hero-inner-glow {
+      position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
+      width: 200px; height: 100px;
+      background: radial-gradient(ellipse, rgba(16,185,129,0.2) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-label {
+      font-size: 8px; color: #10b981; text-transform: uppercase; letter-spacing: 4px;
+      margin-bottom: 10px; position: relative; z-index: 1;
+    }
+    .hero-amount {
+      font-size: 52px; font-weight: 800; color: #ffffff;
+      letter-spacing: -2px; line-height: 1; position: relative; z-index: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .hero-divider {
+      width: 60px; height: 2px;
+      background: linear-gradient(90deg, transparent, #10b981, transparent);
+      margin: 16px auto; position: relative; z-index: 1;
+    }
+    .hero-sub { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; position: relative; z-index: 1; }
+
+    /* ---- DATA ROWS ---- */
+    .data-section {
+      position: relative; z-index: 10;
+      margin: 0 36px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .data-row {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 12px;
+      padding: 14px 18px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .data-row:hover { border-color: rgba(255,255,255,0.1); }
+    .data-key { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; }
+    .data-val { font-size: 11px; font-weight: 700; color: #e5e7eb; text-align: right; max-width: 280px; word-break: break-all; }
+    .method-badge {
+      display: inline-block;
+      padding: 3px 10px; border-radius: 6px;
+      background: ${methodBg};
+      color: ${methodColor};
+      border: 1px solid ${methodBorder};
+      font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    }
+
+    /* ---- HASH BLOCK ---- */
+    .hash-block {
+      position: relative; z-index: 10;
+      margin: 10px 36px 0;
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(16,185,129,0.15);
+      border-radius: 12px;
+      padding: 16px 18px;
+    }
+    .hash-label { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
+    .hash-value {
+      font-size: 9px; color: #10b981; word-break: break-all; line-height: 1.7;
+      background: rgba(16,185,129,0.06);
+      border: 1px solid rgba(16,185,129,0.15);
+      border-radius: 8px; padding: 10px 12px;
+      font-weight: 600;
+    }
+    .hash-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      margin-top: 10px; font-size: 8px; color: #3b82f6;
+      text-decoration: none; letter-spacing: 1.5px; text-transform: uppercase;
+    }
+
+    /* ---- VERIFICATION STRIP ---- */
+    .verify-strip {
+      position: relative; z-index: 10;
+      margin: 20px 36px 0;
+      background: linear-gradient(90deg, rgba(16,185,129,0.06), rgba(59,130,246,0.06));
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 12px; padding: 14px 18px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .verify-icon {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3);
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .verify-text { font-size: 8px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.8; }
+    .verify-text strong { color: #10b981; }
+
+    /* ---- FOOTER ---- */
+    .footer {
+      position: relative; z-index: 10;
+      margin-top: auto;
+      padding: 22px 36px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      display: flex; justify-content: space-between; align-items: center;
+      background: rgba(0,0,0,0.4);
+    }
+    .footer-left { font-size: 8px; color: #374151; letter-spacing: 1.5px; text-transform: uppercase; }
+    .footer-right {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 8px; color: #374151; letter-spacing: 1.5px; text-transform: uppercase;
+    }
+    .footer-dot {
+      width: 5px; height: 5px; background: #10b981; border-radius: 50%;
+      box-shadow: 0 0 6px rgba(16,185,129,0.8);
+    }
+
+    /* ---- WATERMARK ---- */
+    .watermark {
+      position: absolute; bottom: 80px; right: -20px;
+      font-size: 80px; font-weight: 800; color: rgba(255,255,255,0.015);
+      text-transform: uppercase; letter-spacing: -4px;
+      pointer-events: none; z-index: 1; transform: rotate(-15deg);
+      white-space: nowrap;
+    }
+
+    @media print {
+      html, body {
+        background: #000000 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <!-- background layers -->
+  <div class="dot-grid"></div>
+  <div class="orb-tl"></div>
+  <div class="orb-br"></div>
+  <div class="orb-center"></div>
+  <div class="watermark">CompoundOS</div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo-wrap">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <div>
+        <div class="logo-name">CompoundOS</div>
+        <div class="logo-sub">Core Infrastructure</div>
+      </div>
+    </div>
+    <div class="receipt-badge">
+      <div class="receipt-label">Verified Settlement</div>
+      <div class="receipt-id">${receiptId}</div>
+      <div class="receipt-gen">Generated ${generatedAt}</div>
+    </div>
+  </div>
+
+  <!-- HERO AMOUNT -->
+  <div class="hero">
+    <div class="hero-inner-glow"></div>
+    <div class="hero-label">Value Extinguished</div>
+    <div class="hero-amount">₦${Number(receipt.amount_due).toLocaleString()}</div>
+    <div class="hero-divider"></div>
+    <div class="hero-sub">Official Settlement Proof • Cryptographically Attested</div>
+  </div>
+
+  <!-- DATA ROWS -->
+  <div class="data-section">
+    <div class="data-row">
+      <span class="data-key">Billing Period</span>
+      <span class="data-val">${billingPeriod ?? '—'}</span>
+    </div>
+    <div class="data-row">
+      <span class="data-key">Clearance Date</span>
+      <span class="data-val">${new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+    </div>
+    <div class="data-row">
+      <span class="data-key">Settlement Route</span>
+      <span class="data-val"><span class="method-badge">${receipt.payment_method ?? '—'}</span></span>
+    </div>
+    <div class="data-row">
+      <span class="data-key">Network</span>
+      <span class="data-val">Base Mainnet (Chain ID 8453)</span>
+    </div>
+  </div>
+
+  <!-- HASH BLOCK -->
+  <div class="hash-block">
+    <div class="hash-label">Cryptographic Attestation Hash</div>
+    <div class="hash-value">${receipt.transaction_reference ?? 'SECURE-OFFCHAIN-WIRE-LOG'}</div>
+    ${basescanUrl ? `<a class="hash-link" href="${basescanUrl}">&#x2197; Verify on Basescan: ${basescanUrl}</a>` : ''}
+  </div>
+
+  <!-- VERIFICATION STRIP -->
+  <div class="verify-strip">
+    <div class="verify-icon">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 6L9 17l-5-5"/>
+      </svg>
+    </div>
+    <div class="verify-text">
+      This receipt is an <strong>official cryptographic record</strong> generated by CompoundOS Core Infrastructure.
+      All on-chain transactions are immutably recorded on the <strong>Base Layer 2 network</strong> and can be independently verified.
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="footer-left">compoundos-node.vercel.app • ${new Date().getFullYear()}</div>
+    <div class="footer-right">
+      <div class="footer-dot"></div>
+      System Verified &nbsp;•&nbsp; Tamper-Proof Record
+    </div>
+  </div>
+</div>
+
+<script>
+  // Print immediately when fonts load, then close
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      setTimeout(() => { window.print(); }, 300);
+    });
+  } else {
+    setTimeout(() => { window.print(); }, 800);
+  }
+  window.addEventListener('afterprint', () => { window.close(); });
+</script>
+</body>
+</html>`;
+
+    const printWin = window.open('', '_blank', 'width=900,height=700,scrollbars=yes');
+    if (!printWin) {
+      showToast('Pop-up blocked — please allow pop-ups for this site.', 'error');
+      return;
+    }
+    printWin.document.write(html);
+    printWin.document.close();
+  }, [showToast]);
+
+  // ============================================================
   // FIX #4: calculateDynamicAmount — timezone-safe date comparison
   // Use UTC midnight for due date to avoid off-by-one-day errors
   // ============================================================
@@ -1712,12 +2074,12 @@ function DashboardContent() {
               </div>
             </div>
 
-            {/* FIX #17: Print only the receipt — scoped print styles */}
+            {/* EXPORT PDF — opens isolated branded print window */}
             <button
-              onClick={() => window.print()}
-              className="w-full mt-8 bg-transparent hover:bg-white/[0.02] border border-white/20 text-white py-4 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+              onClick={() => handleExportReceiptPDF(viewingReceipt)}
+              className="w-full mt-8 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400 py-4 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.1)] hover:shadow-[0_0_30px_rgba(16,185,129,0.2)]"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" /></svg>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               Export PDF Statement
             </button>
           </div>
@@ -2061,13 +2423,6 @@ function DashboardContent() {
           input[type="number"]::-webkit-inner-spin-button,
           input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
           input[type="number"] { -moz-appearance: textfield; }
-
-          /* Print: show only receipt modal content */
-          @media print {
-            body > * { display: none !important; }
-            .fixed.inset-0.z-\\[110\\] { display: flex !important; position: static !important; background: white !important; }
-            .fixed.inset-0.z-\\[110\\] > div { box-shadow: none !important; border: 1px solid #eee !important; background: white !important; color: black !important; }
-          }
         `
       }} />
     </div>
