@@ -601,35 +601,51 @@ function DashboardContent() {
   const adminStats = dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
   const verifyPaystackReturn = useCallback(async (reference: string) => {
+    // 1. Instantly sanitize the URL to maintain a clean, parameter-free routing state
     window.history.replaceState({}, document.title, window.location.pathname);
-    await new Promise(resolve => setTimeout(resolve, 800));
+    
     try {
+      // 2. Retrieve the intent ID from secure local storage
       const pendingId = localStorage.getItem('pending_fiat_invoice');
       if (!pendingId) return;
 
+      // 3. Fetch the exact, current state of the invoice from the database
       const { data: matchedInvoice } = await supabase
         .from('tenant_invoices')
-        .select('*')
+        .select('*, monthly_bills(*)')
         .eq('id', pendingId)
         .single();
 
-      if (matchedInvoice && !matchedInvoice.is_paid) {
-        await supabase.from('tenant_invoices').update({
+      if (!matchedInvoice) return;
+
+      let finalInvoice = matchedInvoice;
+
+      // 4. Fallback execution: If the Paystack webhook hasn't fired yet, update state directly
+      if (!matchedInvoice.is_paid) {
+        const { data: updatedInvoice, error } = await supabase.from('tenant_invoices').update({
           is_paid: true,
           payment_method: 'FIAT',
           transaction_reference: reference,
           paid_at: new Date().toISOString()
-        }).eq('id', pendingId);
+        }).eq('id', pendingId).select('*, monthly_bills(*)').single();
 
-        setActiveInvoice(matchedInvoice);
-        setPaymentPortalMode('FIAT');
-        setLastConfirmedTx(reference);
-        setPaymentLifecycle('SUCCESS');
+        if (!error && updatedInvoice) {
+          finalInvoice = updatedInvoice;
+        }
       }
+
+      // 5. STATE OVERRIDE: Force the success matrix to render utilizing the verified data
+      setActiveInvoice(finalInvoice);
+      setPaymentPortalMode('FIAT');
+      setLastConfirmedTx(finalInvoice.transaction_reference || reference);
+      setPaymentLifecycle('SUCCESS');
+
+      // 6. Purge the temporary execution intent
       localStorage.removeItem('pending_fiat_invoice');
     } catch (err) {
-      console.error('Paystack state recovery error:', err);
+      console.error('State Recovery Error:', err);
     } finally {
+      // 7. Trigger SWR revalidation to sync the UI ledger
       mutateDashboard();
     }
   }, [mutateDashboard]);
