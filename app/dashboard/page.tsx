@@ -195,6 +195,9 @@ function DashboardContent() {
   // ============================================================
   // EXPORT RECEIPT (Secured & Logo Integrated)
   // ============================================================
+  // ============================================================
+  // EXPORT RECEIPT (Strict Original Enterprise Layout)
+  // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
     
@@ -210,27 +213,13 @@ function DashboardContent() {
     }
 
     const billingPeriod = escapeHTML(rawBillingPeriod);
-    const methodStr = escapeHTML(receipt.payment_method);
-    const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
-    
-    const methodColor = isWeb3 ? '#3b82f6' : '#a855f7';
-    const methodBg = isWeb3 ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)';
-    const methodBorder = isWeb3 ? 'rgba(59,130,246,0.4)' : 'rgba(168,85,247,0.4)';
-    
-    const rawTxRef = receipt.transaction_reference || '';
+    const methodStr = escapeHTML(receipt.payment_method) || 'FIAT';
+    const amountDue = Number(receipt.amount_due).toLocaleString();
+    const rawTxRef = receipt.transaction_reference || '—';
     const cleanTxRef = escapeHTML(rawTxRef);
-    const basescanUrl = isWeb3 && rawTxRef.startsWith('0x')
-      ? `https://basescan.org/tx/${cleanTxRef}`
-      : null;
-
-    const receiptId = `COS-${escapeHTML(receipt.id?.slice(0, 8).toUpperCase() ?? 'XXXXXXXX')}`;
-    const generatedAt = new Date().toLocaleString('en-GB', {
-      day: '2-digit', month: 'short', year: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
-    });
     
     const clearanceDate = receipt.paid_at 
-        ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) 
+        ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) 
         : '—';
 
     const html = `<!DOCTYPE html>
@@ -238,295 +227,205 @@ function DashboardContent() {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>CompoundOS Receipt — ${receiptId}</title>
+  <title>CompoundOS | Enterprise Utility Node</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
       width: 210mm;
       min-height: 297mm;
-      background: #000000 !important;
+      background: #ffffff !important; /* Force white background for printing */
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
       color-adjust: exact !important;
-      font-family: 'JetBrains Mono', 'Courier New', monospace;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #000000;
     }
 
+    /* Container perfectly sized for A4 */
     .page {
       width: 210mm;
       min-height: 297mm;
-      background: #000000;
+      background: #ffffff;
       position: relative;
-      overflow: hidden;
-      padding: 0;
+      padding: 40px;
+    }
+
+    /* Print scaling to match the browser screenshot exactly */
+    .content-wrapper {
+      transform-origin: top left;
+      /* The screenshot looks like a slightly zoomed out view, this scale helps match the proportions */
+      transform: scale(0.9); 
+      width: 111%; /* Compensate for scale */
+    }
+
+    /* HEADER */
+    .header-logo-row {
+      margin-bottom: 40px;
+    }
+
+    .header-text {
+      margin-bottom: 24px;
+    }
+    
+    .status-badge {
+      display: inline-block;
+      border: 1px solid #10b981;
+      color: #10b981;
+      padding: 6px 12px;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .audited-record {
+      color: #10b981;
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+
+    /* MAIN CONTENT GRID */
+    .main-grid {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-top: 40px;
+    }
+
+    /* LEFT COLUMN - DATA PAIRS */
+    .data-column {
       display: flex;
       flex-direction: column;
+      gap: 32px;
+      max-width: 60%;
     }
 
-    /* ---- BACKGROUND GLOW ORBS ---- */
-    .orb-tl {
-      position: absolute; top: -80px; left: -80px;
-      width: 400px; height: 400px;
-      background: radial-gradient(circle, rgba(16,185,129,0.18) 0%, transparent 70%);
-      border-radius: 50%; pointer-events: none;
-    }
-    .orb-br {
-      position: absolute; bottom: -60px; right: -60px;
-      width: 350px; height: 350px;
-      background: radial-gradient(circle, rgba(59,130,246,0.14) 0%, transparent 70%);
-      border-radius: 50%; pointer-events: none;
-    }
-    .orb-center {
-      position: absolute; top: 35%; left: 50%; transform: translateX(-50%);
-      width: 500px; height: 300px;
-      background: radial-gradient(ellipse, rgba(16,185,129,0.05) 0%, transparent 70%);
-      border-radius: 50%; pointer-events: none;
-    }
-    /* dot grid */
-    .dot-grid {
-      position: absolute; inset: 0; pointer-events: none;
-      background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.06) 1px, transparent 0);
-      background-size: 24px 24px;
+    .data-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
 
-    /* ---- HEADER ---- */
-    .header {
-      position: relative; z-index: 10;
-      padding: 28px 36px 24px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
-      display: flex; align-items: center; justify-content: space-between;
-      background: rgba(255,255,255,0.02);
-    }
-    .logo-wrap { display: flex; align-items: center; gap: 14px; }
-    .logo-name { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
-    .logo-sub { font-size: 8px; color: #6b7280; text-transform: uppercase; letter-spacing: 3px; margin-top: 2px; }
-    .receipt-badge {
-      text-align: right;
-    }
-    .receipt-label {
-      font-size: 8px; color: #10b981; text-transform: uppercase; letter-spacing: 3px;
-      display: flex; align-items: center; justify-content: flex-end; gap: 6px;
-    }
-    .receipt-label::before {
-      content: ''; display: inline-block; width: 6px; height: 6px;
-      background: #10b981; border-radius: 50%;
-      box-shadow: 0 0 8px rgba(16,185,129,0.8);
-    }
-    .receipt-id { font-size: 11px; font-weight: 700; color: #ffffff; margin-top: 4px; letter-spacing: 1px; }
-    .receipt-gen { font-size: 8px; color: #4b5563; margin-top: 3px; }
-
-    /* ---- HERO AMOUNT ---- */
-    .hero {
-      position: relative; z-index: 10;
-      margin: 32px 36px;
-      background: linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(59,130,246,0.06) 50%, rgba(0,0,0,0) 100%);
-      border: 1px solid rgba(16,185,129,0.2);
-      border-radius: 20px;
-      padding: 32px;
-      text-align: center;
-      overflow: hidden;
-    }
-    .hero-inner-glow {
-      position: absolute; top: -30px; left: 50%; transform: translateX(-50%);
-      width: 200px; height: 100px;
-      background: radial-gradient(ellipse, rgba(16,185,129,0.2) 0%, transparent 70%);
-      pointer-events: none;
-    }
-    .hero-label {
-      font-size: 8px; color: #10b981; text-transform: uppercase; letter-spacing: 4px;
-      margin-bottom: 10px; position: relative; z-index: 1;
-    }
-    .hero-amount {
-      font-size: 52px; font-weight: 800; color: #ffffff;
-      letter-spacing: -2px; line-height: 1; position: relative; z-index: 1;
-      font-variant-numeric: tabular-nums;
-    }
-    .hero-divider {
-      width: 60px; height: 2px;
-      background: linear-gradient(90deg, transparent, #10b981, transparent);
-      margin: 16px auto; position: relative; z-index: 1;
-    }
-    .hero-sub { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; position: relative; z-index: 1; }
-
-    /* ---- DATA ROWS ---- */
-    .data-section {
-      position: relative; z-index: 10;
-      margin: 0 36px;
-      display: flex; flex-direction: column; gap: 10px;
-    }
-    .data-row {
-      background: rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.05);
-      border-radius: 12px;
-      padding: 14px 18px;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .data-row:hover { border-color: rgba(255,255,255,0.1); }
-    .data-key { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; }
-    .data-val { font-size: 11px; font-weight: 700; color: #e5e7eb; text-align: right; max-width: 280px; word-break: break-all; }
-    .method-badge {
-      display: inline-block;
-      padding: 3px 10px; border-radius: 6px;
-      background: ${methodBg};
-      color: ${methodColor};
-      border: 1px solid ${methodBorder};
-      font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
-    }
-
-    /* ---- HASH BLOCK ---- */
-    .hash-block {
-      position: relative; z-index: 10;
-      margin: 10px 36px 0;
-      background: rgba(0,0,0,0.6);
-      border: 1px solid rgba(16,185,129,0.15);
-      border-radius: 12px;
-      padding: 16px 18px;
-    }
-    .hash-label { font-size: 9px; color: #6b7280; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 10px; }
-    .hash-value {
-      font-size: 9px; color: #10b981; word-break: break-all; line-height: 1.7;
-      background: rgba(16,185,129,0.06);
-      border: 1px solid rgba(16,185,129,0.15);
-      border-radius: 8px; padding: 10px 12px;
+    .data-label {
+      color: #6b7280;
+      font-size: 13px;
       font-weight: 600;
-    }
-    .hash-link {
-      display: inline-flex; align-items: center; gap: 4px;
-      margin-top: 10px; font-size: 8px; color: #3b82f6;
-      text-decoration: none; letter-spacing: 1.5px; text-transform: uppercase;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    /* ---- VERIFICATION STRIP ---- */
-    .verify-strip {
-      position: relative; z-index: 10;
-      margin: 20px 36px 0;
-      background: linear-gradient(90deg, rgba(16,185,129,0.06), rgba(59,130,246,0.06));
-      border: 1px solid rgba(255,255,255,0.04);
-      border-radius: 12px; padding: 14px 18px;
-      display: flex; align-items: center; gap: 12px;
-    }
-    .verify-icon {
-      width: 28px; height: 28px; border-radius: 50%;
-      background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.3);
-      display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-    }
-    .verify-text { font-size: 8px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.8; }
-    .verify-text strong { color: #10b981; }
-
-    /* ---- FOOTER ---- */
-    .footer {
-      position: relative; z-index: 10;
-      margin-top: auto;
-      padding: 22px 36px;
-      border-top: 1px solid rgba(255,255,255,0.04);
-      display: flex; justify-content: space-between; align-items: center;
-      background: rgba(0,0,0,0.4);
-    }
-    .footer-left { font-size: 8px; color: #374151; letter-spacing: 1.5px; text-transform: uppercase; }
-    .footer-right {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 8px; color: #374151; letter-spacing: 1.5px; text-transform: uppercase;
-    }
-    .footer-dot {
-      width: 5px; height: 5px; background: #10b981; border-radius: 50%;
-      box-shadow: 0 0 6px rgba(16,185,129,0.8);
+    .data-value {
+      font-size: 16px;
+      font-weight: 500;
+      color: #111827;
+      word-break: break-all;
     }
 
-    /* ---- WATERMARK ---- */
-    .watermark {
-      position: absolute; bottom: 80px; right: -20px;
-      font-size: 80px; font-weight: 800; color: rgba(255,255,255,0.015);
-      text-transform: uppercase; letter-spacing: -4px;
-      pointer-events: none; z-index: 1; transform: rotate(-15deg);
-      white-space: nowrap;
+    /* RIGHT COLUMN - VALUE */
+    .value-column {
+      text-align: right;
+      min-width: 200px;
+    }
+
+    .value-label {
+      color: #6b7280;
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .value-amount {
+      font-size: 48px;
+      font-weight: 700;
+      color: #111827;
+      line-height: 1;
+      letter-spacing: -1px;
+    }
+
+    /* BUTTON (Visual only for print fidelity if needed) */
+    .export-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      padding: 10px 16px;
+      border-radius: 6px;
+      color: #374151;
+      font-size: 14px;
+      font-weight: 500;
+      margin-top: 60px;
+    }
+    
+    .check-icon {
+      color: #10b981;
+      font-weight: bold;
     }
 
     @media print {
       html, body {
-        background: #000000 !important;
+        background: #ffffff !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-      .no-print { display: none !important; }
+      .page { padding: 20mm; } /* Standard print margins */
+      .export-btn { display: none !important; } /* Hide the button when actually printing */
     }
   </style>
 </head>
 <body>
 <div class="page">
-  <div class="dot-grid"></div>
-  <div class="orb-tl"></div>
-  <div class="orb-br"></div>
-  <div class="orb-center"></div>
-  <div class="watermark">CompoundOS</div>
+  <div class="content-wrapper">
+    <div class="header-logo-row">
+      <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 8px; object-fit: cover;" onerror="this.style.display='none'" />
+    </div>
 
-  <div class="header">
-    <div class="logo-wrap">
-      <img src="${baseUrl}/logo.jpg" alt="CompoundOS" style="width: 42px; height: 42px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 20px rgba(16,185,129,0.4); flex-shrink: 0;" />
-      <div>
-        <div class="logo-name">CompoundOS</div>
-        <div class="logo-sub">Core Infrastructure</div>
+    <div class="header-text">
+      <div class="status-badge">OFFICIAL SETTLEMENT PROOF</div>
+      <div class="audited-record">COMPOUNDOS AUDITED RECORD</div>
+    </div>
+
+    <div class="main-grid">
+      
+      <div class="data-column">
+        <div class="data-group">
+          <div class="data-label">BILLING CYCLE</div>
+          <div class="data-value">${billingPeriod}</div>
+        </div>
+        
+        <div class="data-group">
+          <div class="data-label">CLEARANCE DATE</div>
+          <div class="data-value">${clearanceDate}</div>
+        </div>
+
+        <div class="data-group">
+          <div class="data-label">ROUTING METHOD</div>
+          <div class="data-value">${methodStr}</div>
+        </div>
+
+        <div class="data-group">
+          <div class="data-label">CRYPTOGRAPHIC ATTESTATION HASH</div>
+          <div class="data-value">${cleanTxRef}</div>
+        </div>
       </div>
-    </div>
-    <div class="receipt-badge">
-      <div class="receipt-label">Verified Settlement</div>
-      <div class="receipt-id">${receiptId}</div>
-      <div class="receipt-gen">Generated ${generatedAt}</div>
-    </div>
-  </div>
 
-  <div class="hero">
-    <div class="hero-inner-glow"></div>
-    <div class="hero-label">Value Extinguished</div>
-    <div class="hero-amount">₦${Number(receipt.amount_due).toLocaleString()}</div>
-    <div class="hero-divider"></div>
-    <div class="hero-sub">Official Settlement Proof • Cryptographically Attested</div>
-  </div>
+      <div class="value-column">
+        <div class="value-label">VALUE EXTINGUISHED</div>
+        <div class="value-amount">₦${amountDue}</div>
+      </div>
 
-  <div class="data-section">
-    <div class="data-row">
-      <span class="data-key">Billing Period</span>
-      <span class="data-val">${billingPeriod}</span>
     </div>
-    <div class="data-row">
-      <span class="data-key">Clearance Date</span>
-      <span class="data-val">${clearanceDate}</span>
-    </div>
-    <div class="data-row">
-      <span class="data-key">Settlement Route</span>
-      <span class="data-val"><span class="method-badge">${methodStr}</span></span>
-    </div>
-    <div class="data-row">
-      <span class="data-key">Network</span>
-      <span class="data-val">Base Mainnet (Chain ID 8453)</span>
-    </div>
-  </div>
 
-  <div class="hash-block">
-    <div class="hash-label">Cryptographic Attestation Hash</div>
-    <div class="hash-value">${cleanTxRef || 'SECURE-OFFCHAIN-WIRE-LOG'}</div>
-    ${basescanUrl ? `<a class="hash-link" href="${basescanUrl}">&#x2197; Verify on Basescan: ${basescanUrl}</a>` : ''}
-  </div>
+    <div class="export-btn no-print">
+      EXPORT PDF STATEMENT <span class="check-icon">✓</span>
+    </div>
 
-  <div class="verify-strip">
-    <div class="verify-icon">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M20 6L9 17l-5-5"/>
-      </svg>
-    </div>
-    <div class="verify-text">
-      This receipt is an <strong>official cryptographic record</strong> generated by CompoundOS Core Infrastructure.
-      All on-chain transactions are immutably recorded on the <strong>Base Layer 2 network</strong> and can be independently verified.
-    </div>
-  </div>
-
-  <div class="footer">
-    <div class="footer-left">compoundos-node.vercel.app • ${new Date().getFullYear()}</div>
-    <div class="footer-right">
-      <div class="footer-dot"></div>
-      System Verified &nbsp;•&nbsp; Tamper-Proof Record
-    </div>
   </div>
 </div>
 
