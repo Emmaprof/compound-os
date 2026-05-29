@@ -12,6 +12,38 @@ import useSWR from 'swr';
 import { TREASURY_ADDRESS, TREASURY_ABI } from '../../lib/web3/contractABI';
 
 // ============================================================
+// STRICT TYPE DEFINITIONS (Google Security Standard)
+// ============================================================
+interface Tenant {
+  id: string;
+  email: string;
+  full_name: string;
+  is_active: boolean;
+  avatar_url?: string;
+}
+
+interface MonthlyBill {
+  billing_period: string;
+  due_date: string;
+  total_amount_naira: number;
+}
+
+interface Invoice {
+  id: string;
+  tenant_id: string;
+  amount_due: number;
+  is_paid: boolean;
+  payment_method?: string;
+  transaction_reference?: string;
+  paid_at?: string;
+  created_at: string;
+  monthly_bills: MonthlyBill | MonthlyBill[];
+  tenants?: Tenant;
+}
+
+type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
+
+// ============================================================
 // PRODUCTION MAINNET CONSTANTS
 // ============================================================
 const USDC_CONTRACT_ADDRESS = getAddress("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
@@ -25,10 +57,8 @@ const ERC20_ABI = [
   { inputs: [{ name: "account", type: "address" }], name: "balanceOf", outputs: [{ name: "", type: "uint256" }], stateMutability: "view", type: "function" }
 ] as const;
 
-type Toast = { id: number; message: string; type: 'success' | 'error' | 'info' };
-
 // ============================================================
-// FIX #1: Clipboard with fallback for Safari / non-secure contexts
+// HELPER FUNCTIONS
 // ============================================================
 async function safeWriteClipboard(text: string): Promise<boolean> {
   try {
@@ -36,7 +66,6 @@ async function safeWriteClipboard(text: string): Promise<boolean> {
       await navigator.clipboard.writeText(text);
       return true;
     }
-    // Fallback: execCommand (deprecated but works in older Safari/WebViews)
     const el = document.createElement('textarea');
     el.value = text;
     el.style.cssText = 'position:fixed;left:-9999px;top:-9999px;opacity:0';
@@ -51,6 +80,20 @@ async function safeWriteClipboard(text: string): Promise<boolean> {
   }
 }
 
+// Sanitize strings for HTML injection to prevent XSS
+function escapeHTML(str: string | undefined): string {
+  if (!str) return '—';
+  return str.replace(/[&<>'"]/g, 
+    tag => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;'
+    }[tag] || tag)
+  );
+}
+
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -59,9 +102,6 @@ function DashboardContent() {
   const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient();
 
-  // ============================================================
-  // FIX #2: Suppress noisy WS interruption errors globally once
-  // ============================================================
   useEffect(() => {
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       const msg = event.reason?.message ?? '';
@@ -89,7 +129,7 @@ function DashboardContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [ngnToUsdRate, setNgnToUsdRate] = useState<number>(1520);
 
-  const [viewingReceipt, setViewingReceipt] = useState<any>(null);
+  const [viewingReceipt, setViewingReceipt] = useState<Invoice | null>(null);
   const [allowanceInput, setAllowanceInput] = useState<string>('5');
   const [isApproving, setIsApproving] = useState(false);
   const [localDeductions, setLocalDeductions] = useState<number>(0);
@@ -99,22 +139,18 @@ function DashboardContent() {
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [activeInvoice, setActiveInvoice] = useState<any>(null);
+  const [activeInvoice, setActiveInvoice] = useState<Invoice | null>(null);
   const [paymentPortalMode, setPaymentPortalMode] = useState<'FIAT' | 'USDC' | 'VAULT' | null>(null);
   const [manualTxHash, setManualTxHash] = useState('');
   const [lastConfirmedTx, setLastConfirmedTx] = useState<string>('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [paymentLifecycle, setPaymentLifecycle] = useState<'IDLE' | 'PROCESSING' | 'SUCCESS'>('IDLE');
 
-  // Treasury modal
   const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
   const [withdrawDestination, setWithdrawDestination] = useState('');
   const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
 
-  // ============================================================
-  // FIX #3: Close notification panel on outside click
-  // ============================================================
   useEffect(() => {
     if (!isNotificationsOpen) return;
     const handler = (e: MouseEvent) => {
@@ -157,27 +193,45 @@ function DashboardContent() {
   }, []);
 
   // ============================================================
-  // RECEIPT PDF — opens isolated print window with full inline
-  // styles, gradients, CompoundOS branding. No Tailwind needed.
-  // Works across all browsers, background-color prints correctly.
+  // EXPORT RECEIPT (Secured & Logo Integrated)
   // ============================================================
-  const handleExportReceiptPDF = useCallback((receipt: any) => {
-    const billingPeriod = Array.isArray(receipt.monthly_bills)
-      ? receipt.monthly_bills[0]?.billing_period
-      : receipt.monthly_bills?.billing_period;
-    const isWeb3 = receipt.payment_method === 'USDC' || receipt.payment_method?.includes('Vault');
+  const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
+    if (!receipt) return;
+    
+    // Construct dynamic base URL for local image resolution
+    const baseUrl = window.location.origin;
+    
+    // Safely extract billing period
+    let rawBillingPeriod = '—';
+    if (Array.isArray(receipt.monthly_bills) && receipt.monthly_bills.length > 0) {
+        rawBillingPeriod = receipt.monthly_bills[0].billing_period;
+    } else if (!Array.isArray(receipt.monthly_bills) && receipt.monthly_bills) {
+        rawBillingPeriod = receipt.monthly_bills.billing_period;
+    }
+
+    const billingPeriod = escapeHTML(rawBillingPeriod);
+    const methodStr = escapeHTML(receipt.payment_method);
+    const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
+    
     const methodColor = isWeb3 ? '#3b82f6' : '#a855f7';
     const methodBg = isWeb3 ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)';
     const methodBorder = isWeb3 ? 'rgba(59,130,246,0.4)' : 'rgba(168,85,247,0.4)';
-    const basescanUrl = isWeb3 && receipt.transaction_reference?.startsWith('0x')
-      ? `https://basescan.org/tx/${receipt.transaction_reference}`
+    
+    const rawTxRef = receipt.transaction_reference || '';
+    const cleanTxRef = escapeHTML(rawTxRef);
+    const basescanUrl = isWeb3 && rawTxRef.startsWith('0x')
+      ? `https://basescan.org/tx/${cleanTxRef}`
       : null;
 
-    const receiptId = `COS-${receipt.id?.slice(0, 8).toUpperCase() ?? 'XXXXXXXX'}`;
+    const receiptId = `COS-${escapeHTML(receipt.id?.slice(0, 8).toUpperCase() ?? 'XXXXXXXX')}`;
     const generatedAt = new Date().toLocaleString('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit', second: '2-digit'
     });
+    
+    const clearanceDate = receipt.paid_at 
+        ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) 
+        : '—';
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -246,14 +300,6 @@ function DashboardContent() {
       background: rgba(255,255,255,0.02);
     }
     .logo-wrap { display: flex; align-items: center; gap: 14px; }
-    .logo-icon {
-      width: 42px; height: 42px; border-radius: 12px;
-      background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
-      display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 0 20px rgba(16,185,129,0.4);
-      flex-shrink: 0;
-    }
-    .logo-icon svg { width: 22px; height: 22px; }
     .logo-name { font-size: 16px; font-weight: 800; color: #ffffff; letter-spacing: -0.5px; }
     .logo-sub { font-size: 8px; color: #6b7280; text-transform: uppercase; letter-spacing: 3px; margin-top: 2px; }
     .receipt-badge {
@@ -409,21 +455,15 @@ function DashboardContent() {
 </head>
 <body>
 <div class="page">
-  <!-- background layers -->
   <div class="dot-grid"></div>
   <div class="orb-tl"></div>
   <div class="orb-br"></div>
   <div class="orb-center"></div>
   <div class="watermark">CompoundOS</div>
 
-  <!-- HEADER -->
   <div class="header">
     <div class="logo-wrap">
-      <div class="logo-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-      </div>
+      <img src="${baseUrl}/logo.jpg" alt="CompoundOS" style="width: 42px; height: 42px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 20px rgba(16,185,129,0.4); flex-shrink: 0;" />
       <div>
         <div class="logo-name">CompoundOS</div>
         <div class="logo-sub">Core Infrastructure</div>
@@ -436,7 +476,6 @@ function DashboardContent() {
     </div>
   </div>
 
-  <!-- HERO AMOUNT -->
   <div class="hero">
     <div class="hero-inner-glow"></div>
     <div class="hero-label">Value Extinguished</div>
@@ -445,19 +484,18 @@ function DashboardContent() {
     <div class="hero-sub">Official Settlement Proof • Cryptographically Attested</div>
   </div>
 
-  <!-- DATA ROWS -->
   <div class="data-section">
     <div class="data-row">
       <span class="data-key">Billing Period</span>
-      <span class="data-val">${billingPeriod ?? '—'}</span>
+      <span class="data-val">${billingPeriod}</span>
     </div>
     <div class="data-row">
       <span class="data-key">Clearance Date</span>
-      <span class="data-val">${new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="data-val">${clearanceDate}</span>
     </div>
     <div class="data-row">
       <span class="data-key">Settlement Route</span>
-      <span class="data-val"><span class="method-badge">${receipt.payment_method ?? '—'}</span></span>
+      <span class="data-val"><span class="method-badge">${methodStr}</span></span>
     </div>
     <div class="data-row">
       <span class="data-key">Network</span>
@@ -465,14 +503,12 @@ function DashboardContent() {
     </div>
   </div>
 
-  <!-- HASH BLOCK -->
   <div class="hash-block">
     <div class="hash-label">Cryptographic Attestation Hash</div>
-    <div class="hash-value">${receipt.transaction_reference ?? 'SECURE-OFFCHAIN-WIRE-LOG'}</div>
+    <div class="hash-value">${cleanTxRef || 'SECURE-OFFCHAIN-WIRE-LOG'}</div>
     ${basescanUrl ? `<a class="hash-link" href="${basescanUrl}">&#x2197; Verify on Basescan: ${basescanUrl}</a>` : ''}
   </div>
 
-  <!-- VERIFICATION STRIP -->
   <div class="verify-strip">
     <div class="verify-icon">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -485,7 +521,6 @@ function DashboardContent() {
     </div>
   </div>
 
-  <!-- FOOTER -->
   <div class="footer">
     <div class="footer-left">compoundos-node.vercel.app • ${new Date().getFullYear()}</div>
     <div class="footer-right">
@@ -496,7 +531,6 @@ function DashboardContent() {
 </div>
 
 <script>
-  // Print immediately when fonts load, then close
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
       setTimeout(() => { window.print(); }, 300);
@@ -518,13 +552,8 @@ function DashboardContent() {
     printWin.document.close();
   }, [showToast]);
 
-  // ============================================================
-  // FIX #4: calculateDynamicAmount — timezone-safe date comparison
-  // Use UTC midnight for due date to avoid off-by-one-day errors
-  // ============================================================
-  const calculateDynamicAmount = useCallback((baseAmount: number, dueDateStr: string) => {
+  const calculateDynamicAmount = useCallback((baseAmount: number, dueDateStr: string | undefined) => {
     if (!dueDateStr) return { amount: baseAmount, isLate: false, daysLeft: 0, totalGrace: 5 };
-    // Parse ISO string correctly and normalize to start-of-day UTC
     const dueDate = new Date(dueDateStr);
     const now = new Date();
     const isLate = now > dueDate;
@@ -537,7 +566,6 @@ function DashboardContent() {
   // SWR DATA FETCHING
   // ============================================================
   const { data: dashboardData, mutate: mutateDashboard, isValidating } = useSWR(
-    // FIX #5: Key is stable — only fetches when user.id is available
     user?.id ? `dashboard-${user.id}` : null,
     async () => {
       const [invoicesRes, globalLedgerRes] = await Promise.all([
@@ -549,12 +577,15 @@ function DashboardContent() {
         supabase.rpc('get_global_ledger')
       ]);
 
-      let pending: any[] = [], cleared: any[] = [], allHistorical: any[] = [], roster: any[] = [];
+      let pending: Invoice[] = [], cleared: Invoice[] = [], allHistorical: Invoice[] = [], roster: Tenant[] = [];
       let stats = { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
       if (!invoicesRes.error && invoicesRes.data) {
-        pending = invoicesRes.data.filter((inv: any) => !inv.is_paid);
-        cleared = invoicesRes.data.filter((inv: any) => inv.is_paid);
+        // Explicitly assert the Supabase payload to match our interface
+        const fetchedInvoices = invoicesRes.data as Invoice[];
+        
+        pending = fetchedInvoices.filter(inv => !inv.is_paid);
+        cleared = fetchedInvoices.filter(inv => inv.is_paid);
       }
 
       if (!globalLedgerRes.error && globalLedgerRes.data) {
@@ -565,24 +596,28 @@ function DashboardContent() {
         }));
       }
 
-      // Only load roster for admin users — guard both here AND in render
       if (user.is_admin) {
         const { data: tenantsRes } = await supabase.from('tenants').select('*');
         roster = tenantsRes || [];
       }
 
       const currentMonthName = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-      const currentCycle = allHistorical.filter((inv: any) => {
-        const period = inv.billing_period;
+      const currentCycle = allHistorical.filter((inv: Invoice) => {
+        let period = '';
+        if (Array.isArray(inv.monthly_bills) && inv.monthly_bills.length > 0) {
+            period = inv.monthly_bills[0].billing_period;
+        } else if (!Array.isArray(inv.monthly_bills) && inv.monthly_bills) {
+            period = inv.monthly_bills.billing_period;
+        }
         const createdMonth = new Date(inv.created_at).toLocaleString('default', { month: 'long', year: 'numeric' });
         return period === currentMonthName || createdMonth === currentMonthName;
       });
 
       stats = {
         activeNodes: roster.length > 0
-          ? roster.filter((t: any) => t.is_active !== false).length
-          : new Set(allHistorical.map((i: any) => i.tenant_id)).size,
-        currentCyclePaid: currentCycle.filter((i: any) => i.is_paid).length,
+          ? roster.filter((t: Tenant) => t.is_active !== false).length
+          : new Set(allHistorical.map((i: Invoice) => i.tenant_id)).size,
+        currentCyclePaid: currentCycle.filter((i: Invoice) => i.is_paid).length,
         currentCycleTotal: currentCycle.length
       };
 
@@ -597,10 +632,6 @@ function DashboardContent() {
   const tenantRoster = dashboardData?.roster ?? [];
   const adminStats = dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
-  // ============================================================
-  // FIX #6: Paystack verification — moved after user is confirmed set
-  // Called explicitly from initializeAppSession once mergedUser is available
-  // ============================================================
   const verifyPaystackReturn = useCallback(async (reference: string) => {
     window.history.replaceState({}, document.title, window.location.pathname);
     await new Promise(resolve => setTimeout(resolve, 800));
@@ -631,14 +662,10 @@ function DashboardContent() {
     } catch (err) {
       console.error('Paystack state recovery error:', err);
     } finally {
-      // mutateDashboard is stable (SWR), safe to call here
       mutateDashboard();
     }
   }, [mutateDashboard]);
 
-  // ============================================================
-  // EXCHANGE RATE FETCH
-  // ============================================================
   useEffect(() => {
     let cancelled = false;
     fetch('https://open.er-api.com/v6/latest/USD')
@@ -650,9 +677,6 @@ function DashboardContent() {
     return () => { cancelled = true; };
   }, []);
 
-  // ============================================================
-  // AUTH + SESSION INIT
-  // ============================================================
   useEffect(() => {
     let isMounted = true;
 
@@ -664,7 +688,6 @@ function DashboardContent() {
         return;
       }
 
-      // Clean OAuth callback fragment/query from URL
       if (
         window.location.hash.includes('access_token=') ||
         window.location.search.includes('code=')
@@ -690,7 +713,6 @@ function DashboardContent() {
       setUser(mergedUser);
       if (mergedUser?.is_admin) setActiveWorkspace('ADMIN');
 
-      // FIX #6 cont: Paystack check runs AFTER user is set — reference stable callback
       const paystackRef = searchParams.get('reference') || searchParams.get('trxref');
       if (paystackRef) {
         await verifyPaystackReturn(paystackRef);
@@ -703,14 +725,9 @@ function DashboardContent() {
     return () => { isMounted = false; };
   }, [searchParams, router, verifyPaystackReturn]);
 
-  // ============================================================
-  // FIX #7: Realtime WebSocket — proper cleanup on unmount
-  // ============================================================
   const channelRef = useRef<any>(null);
   useEffect(() => {
     if (!user?.id || loading) return;
-
-    // Guard: don't create duplicate channel
     if (channelRef.current) return;
 
     const channelName = `ledger-flux-${user.id}`;
@@ -726,7 +743,6 @@ function DashboardContent() {
       }
     });
 
-    // FIXED: cleanup properly removes the channel on unmount
     return () => {
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
@@ -735,11 +751,6 @@ function DashboardContent() {
     };
   }, [user?.id, loading, mutateDashboard]);
 
-  // ============================================================
-  // FIX #8: Infinite scroll — stable sentinel ref, no loop
-  // Using a dedicated sentinelRef instead of useCallback ref
-  // to avoid IntersectionObserver thrash on every render
-  // ============================================================
   useEffect(() => {
     if (!sentinelRef.current) return;
     if (loading || isValidating) return;
@@ -758,11 +769,7 @@ function DashboardContent() {
     return () => observer.disconnect();
   }, [loading, isValidating, clearedInvoices.length, displayLimit]);
 
-  // ============================================================
-  // PAYMENT HANDLERS
-  // ============================================================
   const handleCloseModal = useCallback(() => {
-    // FIX #9: Reset ALL payment state consistently — including VAULT
     setPaymentPortalMode(null);
     setActiveInvoice(null);
     setManualTxHash('');
@@ -807,6 +814,7 @@ function DashboardContent() {
       const receipt = await publicClient.getTransactionReceipt({ hash: cleanedHash as `0x${string}` });
       if (receipt.status !== 'success') throw new Error('Transaction reverted on-chain.');
 
+      if (!activeInvoice) throw new Error('No active invoice.');
       const expectedHash = keccak256(stringToHex(activeInvoice.id));
       let validPaymentFound = false;
 
@@ -818,7 +826,7 @@ function DashboardContent() {
             validPaymentFound = true;
             break;
           }
-        } catch (_) { /* non-matching log — skip */ }
+        } catch (_) { /* Skip non-matching logs */ }
       }
 
       if (!validPaymentFound) throw new Error('No cryptographic match found in Treasury event logs.');
@@ -830,14 +838,19 @@ function DashboardContent() {
   }, [manualTxHash, activeInvoice, publicClient, handleUpdateInvoiceRecord, showToast]);
 
   const handlePayWithConnectedWallet = useCallback(async () => {
+    if (!activeInvoice) return;
     setPaymentLifecycle('PROCESSING');
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
       if (!publicClient) throw new Error('RPC interface offline.');
 
-      const dueStr = Array.isArray(activeInvoice.monthly_bills)
-        ? activeInvoice.monthly_bills[0]?.due_date
-        : activeInvoice.monthly_bills?.due_date;
+      let dueStr = '';
+      if (Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills.length > 0) {
+          dueStr = activeInvoice.monthly_bills[0].due_date;
+      } else if (!Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills) {
+          dueStr = activeInvoice.monthly_bills.due_date;
+      }
+
       const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, dueStr);
       const cryptoValue = parseUnits((dueInfo.amount / ngnToUsdRate).toFixed(6), 6);
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
@@ -876,16 +889,18 @@ function DashboardContent() {
   }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, handleUpdateInvoiceRecord, showToast]);
 
   const handleInitializeFiatPayment = useCallback(async () => {
+    if (!activeInvoice) return;
     setPaymentLifecycle('PROCESSING');
     try {
-      const dueStr = Array.isArray(activeInvoice.monthly_bills)
-        ? activeInvoice.monthly_bills[0]?.due_date
-        : activeInvoice.monthly_bills?.due_date;
+      let dueStr = '';
+      if (Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills.length > 0) {
+          dueStr = activeInvoice.monthly_bills[0].due_date;
+      } else if (!Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills) {
+          dueStr = activeInvoice.monthly_bills.due_date;
+      }
+      
       const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, dueStr);
-      // FIX #10: sessionStorage is scoped to tab, harder to XSS than localStorage
-      // Still not perfect — but better than localStorage for transient state
       sessionStorage.setItem('pending_fiat_invoice', activeInvoice.id);
-      // Keep localStorage for cross-tab recovery compatibility
       localStorage.setItem('pending_fiat_invoice', activeInvoice.id);
 
       const { data, error } = await supabase.functions.invoke('paystack-engine', {
@@ -899,21 +914,21 @@ function DashboardContent() {
     }
   }, [activeInvoice, user, calculateDynamicAmount, showToast]);
 
-  // FIX #11: handleOneClickSettle — capture invoice in local const to prevent race condition
-  const handleOneClickSettle = useCallback(async (invoice: any) => {
+  const handleOneClickSettle = useCallback(async (invoice: Invoice) => {
     if (!userAddress) return showToast('Node wallet disconnected.', 'error');
-
-    // Capture stable reference BEFORE any async ops
     const capturedInvoice = invoice;
-
     setActiveInvoice(capturedInvoice);
     setPaymentPortalMode('VAULT');
     setPaymentLifecycle('PROCESSING');
 
     try {
-      const dueStr = Array.isArray(capturedInvoice.monthly_bills)
-        ? capturedInvoice.monthly_bills[0]?.due_date
-        : capturedInvoice.monthly_bills?.due_date;
+      let dueStr = '';
+      if (Array.isArray(capturedInvoice.monthly_bills) && capturedInvoice.monthly_bills.length > 0) {
+          dueStr = capturedInvoice.monthly_bills[0].due_date;
+      } else if (!Array.isArray(capturedInvoice.monthly_bills) && capturedInvoice.monthly_bills) {
+          dueStr = capturedInvoice.monthly_bills.due_date;
+      }
+      
       const exactUsdcDeduction = calculateDynamicAmount(capturedInvoice.amount_due, dueStr).amount / ngnToUsdRate;
 
       const { data, error } = await supabase.functions.invoke('vault-relayer', {
@@ -929,7 +944,6 @@ function DashboardContent() {
       }
 
       setLocalDeductions(prev => prev + exactUsdcDeduction);
-      // FIX #12: Use onSettled callback approach instead of arbitrary setTimeout
       refetchAllowance();
 
       setLastConfirmedTx(data.txHash);
@@ -959,7 +973,6 @@ function DashboardContent() {
       });
       showToast('Web3 Vault allowance confirmed.', 'success');
       setLocalDeductions(0);
-      // FIX #12: refetch immediately — chain state is already final after writeContractAsync resolves
       refetchAllowance();
     } catch (err: any) {
       showToast(err.shortMessage || err.message, 'error');
@@ -969,11 +982,10 @@ function DashboardContent() {
     }
   }, [allowanceInput, chainId, switchChainAsync, writeContractAsync, refetchAllowance, showToast]);
 
-  // FIX #13: handleGenerateBill — guard against double-submission with a ref lock
   const isGeneratingRef = useRef(false);
   const handleGenerateBill = useCallback(async () => {
     if (!billAmount || isNaN(Number(billAmount))) return showToast('Enter a valid amount.', 'error');
-    if (isGeneratingRef.current) return; // Prevent double-click spam
+    if (isGeneratingRef.current) return;
     isGeneratingRef.current = true;
     setIsGenerating(true);
 
@@ -1005,7 +1017,7 @@ function DashboardContent() {
 
       if (billError || !masterBill) throw new Error('Failed to create master bill record.');
 
-      const invoicesToDeploy = activeTenants.map((t: any) => ({
+      const invoicesToDeploy = activeTenants.map((t: Tenant) => ({
         bill_id: masterBill.id,
         tenant_id: t.id,
         amount_due: baseSplit
@@ -1018,7 +1030,7 @@ function DashboardContent() {
         body: JSON.stringify({
           action_type: 'MATRIX_GENERATED',
           total_network_volume: totalAmount,
-          invoices: activeTenants.map((t: any) => ({ tenant_email: t.email, amount_due: baseSplit }))
+          invoices: activeTenants.map((t: Tenant) => ({ tenant_email: t.email, amount_due: baseSplit }))
         })
       });
 
@@ -1038,12 +1050,11 @@ function DashboardContent() {
 
   const handleToggleNodeState = useCallback(async (tenantId: string, currentState: boolean) => {
     const newState = !currentState;
-    // Optimistic update
     mutateDashboard((currentData: any) => {
       if (!currentData) return currentData;
       return {
         ...currentData,
-        roster: currentData.roster.map((t: any) =>
+        roster: currentData.roster.map((t: Tenant) =>
           t.id === tenantId ? { ...t, is_active: newState } : t
         )
       };
@@ -1055,11 +1066,10 @@ function DashboardContent() {
       showToast(`Node ${newState ? 'reactivated' : 'suspended'}.`, 'success');
     } catch (err) {
       showToast('Failed to update node state — reverting.', 'error');
-      mutateDashboard(); // revert to server state
+      mutateDashboard();
     }
   }, [mutateDashboard, showToast]);
 
-  // FIX #14: Clipboard uses safe fallback helper
   const copyToClipboard = useCallback(async (text: string, fieldId: string) => {
     const ok = await safeWriteClipboard(text);
     if (ok) {
@@ -1077,11 +1087,7 @@ function DashboardContent() {
     router.push('/');
   }, [router]);
 
-  // ============================================================
-  // WITHDRAWAL EXECUTION
-  // ============================================================
   const handleExecuteWithdrawal = useCallback(async () => {
-    // Input validation
     const dest = withdrawDestination.trim();
     const amount = withdrawAmountInput.trim();
 
@@ -1116,9 +1122,6 @@ function DashboardContent() {
     }
   }, [withdrawDestination, withdrawAmountInput, treasuryBalance, chainId, switchChainAsync, writeContractAsync, showToast]);
 
-  // ============================================================
-  // ANALYTICS — memoized, stable
-  // ============================================================
   const analytics = useMemo(() => {
     if (!allHistoricalInvoices || allHistoricalInvoices.length === 0) {
       const emptyMonths = Array.from({ length: 6 }, (_, i) => {
@@ -1128,17 +1131,17 @@ function DashboardContent() {
       return { totalFiat: 0, totalCrypto: 0, collectionRate: 0, totalVolume: 0, personalVolume: 0, monthlyData: emptyMonths, maxMonthValue: 1, recentFeed: [], activeAvatars: [] };
     }
 
-    const paid = allHistoricalInvoices.filter((i: any) => i.is_paid === true || i.is_paid === 'true');
-    const fiatPaid = paid.filter((i: any) => i.payment_method?.toUpperCase() === 'FIAT');
-    const cryptoPaid = paid.filter((i: any) => {
+    const paid = allHistoricalInvoices.filter((i: Invoice) => i.is_paid === true);
+    const fiatPaid = paid.filter((i: Invoice) => i.payment_method?.toUpperCase() === 'FIAT');
+    const cryptoPaid = paid.filter((i: Invoice) => {
       const m = i.payment_method?.toUpperCase() ?? '';
       return m === 'USDC' || m.includes('VAULT');
     });
 
-    const totalVolume = paid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0);
+    const totalVolume = paid.reduce((sum: number, i: Invoice) => sum + Number(i.amount_due || 0), 0);
     const personalVolume = paid
-      .filter((i: any) => i.tenant_id === user?.id)
-      .reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0);
+      .filter((i: Invoice) => i.tenant_id === user?.id)
+      .reduce((sum: number, i: Invoice) => sum + Number(i.amount_due || 0), 0);
 
     const collectionRate = allHistoricalInvoices.length > 0
       ? Math.round((paid.length / allHistoricalInvoices.length) * 100)
@@ -1147,8 +1150,8 @@ function DashboardContent() {
     let activeAvatars: string[] = [];
     if (tenantRoster.length > 0) {
       activeAvatars = tenantRoster
-        .filter((t: any) => t.is_active === true)
-        .map((t: any) => {
+        .filter((t: Tenant) => t.is_active === true)
+        .map((t: Tenant) => {
           const encodedName = encodeURIComponent(t.full_name || 'Node');
           return t.avatar_url || `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
         });
@@ -1167,7 +1170,7 @@ function DashboardContent() {
       };
     }).reverse();
 
-    paid.forEach((inv: any) => {
+    paid.forEach((inv: Invoice) => {
       try {
         const dateToParse = inv.paid_at || inv.created_at;
         if (!dateToParse) return;
@@ -1186,12 +1189,12 @@ function DashboardContent() {
     const absoluteMax = Math.max(...last6Months.map(d => d.networkTotal), 1);
     const maxMonthValue = absoluteMax * 1.2;
     const recentFeed = [...paid]
-      .sort((a: any, b: any) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime())
+      .sort((a: Invoice, b: Invoice) => new Date(b.paid_at || b.created_at).getTime() - new Date(a.paid_at || a.created_at).getTime())
       .slice(0, 10);
 
     return {
-      totalFiat: fiatPaid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0),
-      totalCrypto: cryptoPaid.reduce((sum: number, i: any) => sum + Number(i.amount_due || 0), 0),
+      totalFiat: fiatPaid.reduce((sum: number, i: Invoice) => sum + Number(i.amount_due || 0), 0),
+      totalCrypto: cryptoPaid.reduce((sum: number, i: Invoice) => sum + Number(i.amount_due || 0), 0),
       collectionRate,
       totalVolume,
       personalVolume,
@@ -1202,9 +1205,6 @@ function DashboardContent() {
     };
   }, [allHistoricalInvoices, user, tenantRoster]);
 
-  // ============================================================
-  // DERIVED UI VALUES
-  // ============================================================
   const resolvedUserName = user?.user_metadata?.full_name || user?.full_name || 'Compound Node';
   const authPhoto = user?.user_metadata?.picture || user?.user_metadata?.avatar_url;
   const resolvedAvatarUrl = user?.avatar_url || authPhoto
@@ -1212,12 +1212,9 @@ function DashboardContent() {
 
   const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
     e.currentTarget.src = `https://ui-avatars.com/api/?name=Node&background=111111&color=444444&bold=true`;
-    e.currentTarget.onerror = null; // Prevent infinite loop if fallback also fails
+    e.currentTarget.onerror = null;
   };
 
-  // ============================================================
-  // LOADING STATE
-  // ============================================================
   if (loading || (!dashboardData && user)) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -1226,20 +1223,15 @@ function DashboardContent() {
     );
   }
 
-  // ============================================================
-  // RENDER
-  // ============================================================
   return (
     <div className="min-h-[100dvh] flex flex-col md:flex-row bg-black text-neutral-100 font-sans selection:bg-blue-500/30 overflow-hidden relative">
 
-      {/* Background atmosphere */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div className="absolute top-0 left-1/4 w-[800px] h-[800px] bg-blue-900/10 rounded-full blur-[150px] opacity-30 mix-blend-screen animate-pulse duration-10000"></div>
         <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-emerald-900/10 rounded-full blur-[120px] opacity-20 mix-blend-screen"></div>
         <div className="absolute inset-0 opacity-[0.12]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.15) 1px, transparent 0)`, backgroundSize: '32px 32px' }}></div>
       </div>
 
-      {/* Toast Container */}
       <div className="fixed bottom-4 right-4 md:bottom-6 md:right-6 z-[100] flex flex-col gap-2 pointer-events-none">
         {toasts.map(t => (
           <div
@@ -1254,9 +1246,6 @@ function DashboardContent() {
         ))}
       </div>
 
-      {/* ================================================================
-          SIDEBAR — DESKTOP
-      ================================================================ */}
       <aside className="hidden md:flex flex-col w-64 border-r border-white/[0.04] bg-black/50 backdrop-blur-3xl shrink-0 z-20 relative">
         <div className="p-6 border-b border-white/[0.04] flex items-center gap-4">
           <div className="relative group">
@@ -1311,12 +1300,7 @@ function DashboardContent() {
         </div>
       </aside>
 
-      {/* ================================================================
-          MAIN CONTENT AREA
-      ================================================================ */}
       <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-transparent relative z-10 w-full">
-
-        {/* Mobile Header */}
         <header className="md:hidden flex justify-between items-center px-5 py-4 border-b border-white/[0.04] bg-black/80 backdrop-blur-xl sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <div className="relative">
@@ -1333,7 +1317,6 @@ function DashboardContent() {
           </div>
         </header>
 
-        {/* Mobile Tab Nav */}
         <div className="md:hidden flex border-b border-white/[0.04] bg-black/80 backdrop-blur-xl sticky top-[65px] z-20 overflow-x-auto custom-scrollbar">
           {user?.is_admin && (
             <button
@@ -1360,7 +1343,6 @@ function DashboardContent() {
           </button>
         </div>
 
-        {/* Desktop Page Header */}
         <header className="hidden md:flex justify-between items-center px-10 py-5 border-b border-white/[0.04] bg-black/50 backdrop-blur-xl sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
@@ -1368,7 +1350,6 @@ function DashboardContent() {
           </div>
 
           <div className="flex items-center gap-6">
-            {/* FIX #3: Notification panel with outside-click ref */}
             <div className="relative" ref={notifRef}>
               <button
                 onClick={() => setIsNotificationsOpen(v => !v)}
@@ -1388,8 +1369,14 @@ function DashboardContent() {
                   </div>
                   <div className="max-h-[300px] overflow-y-auto custom-scrollbar p-2">
                     {pendingActionInvoices.length > 0 ? (
-                      pendingActionInvoices.map((inv: any, idx: number) => {
-                        const dueStr = Array.isArray(inv.monthly_bills) ? inv.monthly_bills[0]?.due_date : inv.monthly_bills?.due_date;
+                      pendingActionInvoices.map((inv: Invoice, idx: number) => {
+                        let dueStr = '';
+                        if (Array.isArray(inv.monthly_bills) && inv.monthly_bills.length > 0) {
+                            dueStr = inv.monthly_bills[0].due_date;
+                        } else if (!Array.isArray(inv.monthly_bills) && inv.monthly_bills) {
+                            dueStr = inv.monthly_bills.due_date;
+                        }
+                        
                         const { isLate } = calculateDynamicAmount(inv.amount_due, dueStr);
                         return (
                           <div
@@ -1414,11 +1401,7 @@ function DashboardContent() {
           </div>
         </header>
 
-        {/* ================================================================
-            WORKSPACE CONTENT
-        ================================================================ */}
         <div className="p-5 md:p-10 max-w-[1400px] w-full mx-auto space-y-8 md:space-y-10">
-
           <div className="hidden md:flex justify-between items-end pb-2">
             <div>
               <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-neutral-400">
@@ -1439,11 +1422,7 @@ function DashboardContent() {
           ============================================================== */}
           {activeWorkspace === 'ADMIN' && user?.is_admin && (
             <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500">
-
-              {/* Row 1: Bill Broadcast + Cycle Tracker */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-
-                {/* Broadcast Invoices */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 h-fit shadow-2xl relative overflow-hidden group hover:border-white/10 transition-all duration-500">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <h2 className="text-sm font-bold text-white font-mono uppercase tracking-wider mb-2 relative z-10 flex items-center gap-2">
@@ -1474,7 +1453,6 @@ function DashboardContent() {
                   </div>
                 </div>
 
-                {/* Cycle Tracker */}
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-white/10 transition-all duration-500">
                   <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
                   <div>
@@ -1501,7 +1479,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Row 2: Node Roster */}
               <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
                 <div className="flex justify-between items-center border-b border-white/[0.04] pb-5 mb-5 relative z-10">
                   <div>
@@ -1518,7 +1495,7 @@ function DashboardContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 relative z-10">
-                  {tenantRoster.length > 0 ? tenantRoster.map((tenant: any) => {
+                  {tenantRoster.length > 0 ? tenantRoster.map((tenant: Tenant) => {
                     const encodedName = encodeURIComponent(tenant.full_name || 'Network Node');
                     const avatar = tenant.avatar_url || `https://ui-avatars.com/api/?name=${encodedName}&background=0F172A&color=3B82F6&bold=true`;
                     const isActive = tenant.is_active;
@@ -1553,10 +1530,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* ============================================================
-                  FIX #15: TREASURY MODULE — NOW CORRECTLY OUTSIDE Node Roster
-                  (was previously nested INSIDE the roster div — structural bug)
-              ============================================================ */}
               <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-6 md:p-8 flex flex-col justify-between relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-500 shadow-2xl">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] blur-3xl rounded-full opacity-50 group-hover:opacity-100 transition-opacity"></div>
 
@@ -1581,7 +1554,6 @@ function DashboardContent() {
                     <span className="text-xl text-neutral-500 font-mono font-bold">USDC</span>
                   </div>
 
-                  {/* FIX #16: Show ConnectButton if wallet not connected in withdrawal flow */}
                   {isConnected ? (
                     <button
                       onClick={() => setIsWithdrawModalOpen(true)}
@@ -1597,7 +1569,6 @@ function DashboardContent() {
                   )}
                 </div>
               </div>
-
             </div>
           )}
 
@@ -1606,9 +1577,7 @@ function DashboardContent() {
           ============================================================== */}
           {activeWorkspace === 'ANALYTICS' && (
             <div className="space-y-6 animate-in fade-in duration-500">
-
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl relative overflow-hidden group hover:border-blue-500/30 transition-all duration-300">
                   <div className="flex justify-between items-start mb-6">
                     <div>
@@ -1675,10 +1644,7 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Chart + Live Feed */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-                {/* Bar Chart */}
                 <div className="lg:col-span-8 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-8 shadow-2xl relative group hover:border-white/10 transition-colors duration-500">
                   <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
                     <div className="absolute inset-0 opacity-20" style={{ backgroundImage: `linear-gradient(to right, #ffffff05 1px, transparent 1px), linear-gradient(to bottom, #ffffff05 1px, transparent 1px)`, backgroundSize: '40px 40px' }}></div>
@@ -1731,7 +1697,6 @@ function DashboardContent() {
                   </div>
                 </div>
 
-                {/* Live Protocol Logs */}
                 <div className="lg:col-span-4 bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-5 md:p-6 shadow-2xl flex flex-col h-[350px] md:h-[410px] hover:border-white/10 transition-colors duration-500 relative overflow-hidden">
                   <div className="absolute top-0 right-0 w-full h-32 bg-gradient-to-b from-white/[0.02] to-transparent pointer-events-none"></div>
                   <div className="border-b border-white/[0.06] pb-4 mb-4 shrink-0 flex justify-between items-center relative z-10">
@@ -1739,7 +1704,7 @@ function DashboardContent() {
                     <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
                   </div>
                   <div className="flex-1 overflow-y-auto pr-2 space-y-3 custom-scrollbar relative z-10">
-                    {analytics.recentFeed.map((inv: any, idx: number) => {
+                    {analytics.recentFeed.map((inv: Invoice, idx: number) => {
                       const isWeb3 = inv.payment_method?.toUpperCase() === 'USDC' || inv.payment_method?.toUpperCase()?.includes('VAULT');
                       const isCurrentUser = inv.tenant_id === user?.id;
                       const nodeUserName = user?.is_admin || isCurrentUser
@@ -1788,8 +1753,6 @@ function DashboardContent() {
           ============================================================== */}
           {activeWorkspace === 'RESIDENT' && (
             <div className="animate-in fade-in duration-500 space-y-8">
-
-              {/* Vault Allowance Panel */}
               <div className="bg-[#050A1A] border border-blue-500/20 rounded-3xl p-6 md:p-10 relative overflow-hidden shadow-[0_0_50px_rgba(37,99,235,0.05)]">
                 <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 blur-[100px] rounded-full pointer-events-none"></div>
                 <div className="absolute bottom-0 left-0 w-64 h-64 bg-emerald-500/5 blur-[80px] rounded-full pointer-events-none"></div>
@@ -1863,7 +1826,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Pending Invoices */}
               {pendingActionInvoices.length > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-[10px] md:text-[11px] font-mono text-neutral-400 uppercase tracking-widest flex items-center gap-2">
@@ -1871,9 +1833,17 @@ function DashboardContent() {
                     Dynamic Ledger Requirements
                   </h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 md:gap-6">
-                    {pendingActionInvoices.map((invoice: any) => {
-                      const dueStr = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.due_date : invoice.monthly_bills?.due_date;
-                      const period = Array.isArray(invoice.monthly_bills) ? invoice.monthly_bills[0]?.billing_period : invoice.monthly_bills?.billing_period;
+                    {pendingActionInvoices.map((invoice: Invoice) => {
+                      let dueStr = '';
+                      let period = 'Current Bill';
+                      if (Array.isArray(invoice.monthly_bills) && invoice.monthly_bills.length > 0) {
+                          dueStr = invoice.monthly_bills[0].due_date;
+                          period = invoice.monthly_bills[0].billing_period;
+                      } else if (!Array.isArray(invoice.monthly_bills) && invoice.monthly_bills) {
+                          dueStr = invoice.monthly_bills.due_date;
+                          period = invoice.monthly_bills.billing_period;
+                      }
+                      
                       const { amount, isLate, daysLeft, totalGrace } = calculateDynamicAmount(invoice.amount_due, dueStr);
                       const usdValue = (amount / ngnToUsdRate).toFixed(2);
                       const isVaultReady = baseAllowanceUSDC >= Number(usdValue);
@@ -1893,7 +1863,7 @@ function DashboardContent() {
                           <div className="space-y-3 relative z-10">
                             <div className="flex justify-between items-start">
                               <span className="inline-block text-[8px] md:text-[9px] font-mono text-neutral-400 border border-white/10 bg-white/[0.02] px-2 md:px-3 py-1 md:py-1.5 rounded uppercase tracking-widest">
-                                {period || 'Current Bill'}
+                                {period}
                               </span>
                               {isLate ? (
                                 <span className="inline-block text-[8px] md:text-[9px] font-mono text-red-400 font-bold uppercase tracking-widest animate-pulse border border-red-500/20 bg-red-500/10 px-2 md:px-3 py-1 md:py-1.5 rounded">10% Penalty Active</span>
@@ -1947,15 +1917,18 @@ function DashboardContent() {
                 </div>
               )}
 
-              {/* Cleared Invoices */}
               {clearedInvoices.length > 0 && (
                 <div className="space-y-4 pt-5 md:pt-6 border-t border-white/[0.04]">
                   <h3 className="text-[10px] md:text-[11px] font-mono text-neutral-400 uppercase tracking-widest mb-4 md:mb-6">Settled Invariant Logs</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {clearedInvoices.slice(0, displayLimit).map((invoice: any) => {
-                      const period = Array.isArray(invoice.monthly_bills)
-                        ? invoice.monthly_bills[0]?.billing_period
-                        : invoice.monthly_bills?.billing_period;
+                    {clearedInvoices.slice(0, displayLimit).map((invoice: Invoice) => {
+                      let period = 'Cleared Log';
+                      if (Array.isArray(invoice.monthly_bills) && invoice.monthly_bills.length > 0) {
+                          period = invoice.monthly_bills[0].billing_period;
+                      } else if (!Array.isArray(invoice.monthly_bills) && invoice.monthly_bills) {
+                          period = invoice.monthly_bills.billing_period;
+                      }
+                      
                       return (
                         <div
                           key={invoice.id}
@@ -1965,7 +1938,7 @@ function DashboardContent() {
                           <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/[0.02] blur-xl rounded-full group-hover:bg-emerald-500/[0.08] transition-colors"></div>
                           <div className="flex items-center justify-between relative z-10">
                             <span className="text-[8px] md:text-[9px] font-mono text-neutral-500 uppercase tracking-widest group-hover:text-emerald-500 transition-colors">
-                              {period || 'Cleared Log'}
+                              {period}
                             </span>
                             <div className="w-4 h-4 md:w-5 md:h-5 rounded-full bg-white/[0.04] flex items-center justify-center text-white group-hover:bg-emerald-500/20 group-hover:text-emerald-400 transition-colors">
                               <svg className="w-2.5 h-2.5 md:w-3 md:h-3" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
@@ -1982,7 +1955,6 @@ function DashboardContent() {
                     })}
                   </div>
 
-                  {/* FIX #8: Sentinel div for IntersectionObserver — no useCallback ref thrash */}
                   {displayLimit < clearedInvoices.length && (
                     <div ref={sentinelRef} className="w-full py-8 flex justify-center items-center">
                       <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
@@ -1991,7 +1963,6 @@ function DashboardContent() {
                 </div>
               )}
 
-              {/* Empty State */}
               {pendingActionInvoices.length === 0 && clearedInvoices.length === 0 && !isValidating && (
                 <div className="bg-black/80 backdrop-blur-md border border-white/[0.04] rounded-3xl p-10 md:p-16 flex flex-col items-center justify-center text-center">
                   <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 mb-5 md:mb-6 shadow-[0_0_20px_rgba(16,185,129,0.2)]">
@@ -2042,23 +2013,27 @@ function DashboardContent() {
               <div className="flex justify-between items-center p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase">Billing Cycle</span>
                 <span className="text-white font-bold">
-                  {Array.isArray(viewingReceipt.monthly_bills) ? viewingReceipt.monthly_bills[0]?.billing_period : viewingReceipt.monthly_bills?.billing_period}
+                  {Array.isArray(viewingReceipt.monthly_bills) && viewingReceipt.monthly_bills.length > 0
+                    ? viewingReceipt.monthly_bills[0].billing_period
+                    : !Array.isArray(viewingReceipt.monthly_bills) && viewingReceipt.monthly_bills
+                        ? viewingReceipt.monthly_bills.billing_period
+                        : '—'}
                 </span>
               </div>
               <div className="flex justify-between items-center p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase">Clearance Date</span>
-                <span className="text-white">{new Date(viewingReceipt.paid_at).toLocaleString()}</span>
+                <span className="text-white">{viewingReceipt.paid_at ? new Date(viewingReceipt.paid_at).toLocaleString() : '—'}</span>
               </div>
               <div className="flex justify-between items-center p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase">Routing Method</span>
                 <span className={`font-bold px-2 py-0.5 rounded ${viewingReceipt.payment_method === 'USDC' || viewingReceipt.payment_method?.includes('Vault') ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'}`}>
-                  {viewingReceipt.payment_method}
+                  {viewingReceipt.payment_method || '—'}
                 </span>
               </div>
               <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5">
                 <span className="text-neutral-500 uppercase block mb-2">Cryptographic Attestation Hash</span>
                 <div className="flex items-center justify-between gap-3 bg-[#000] p-2 rounded-lg border border-white/5">
-                  <span className="text-emerald-400 text-[9px] truncate select-all">{viewingReceipt.transaction_reference}</span>
+                  <span className="text-emerald-400 text-[9px] truncate select-all">{viewingReceipt.transaction_reference || '—'}</span>
                   {(viewingReceipt.payment_method === 'USDC' || viewingReceipt.payment_method?.includes('Vault')) && viewingReceipt.transaction_reference?.startsWith('0x') && (
                     <a
                       href={`https://basescan.org/tx/${viewingReceipt.transaction_reference}`}
@@ -2074,7 +2049,6 @@ function DashboardContent() {
               </div>
             </div>
 
-            {/* EXPORT PDF — opens isolated branded print window */}
             <button
               onClick={() => handleExportReceiptPDF(viewingReceipt)}
               className="w-full mt-8 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-500/60 text-emerald-400 py-4 rounded-xl text-[10px] font-mono font-bold uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(16,185,129,0.1)] hover:shadow-[0_0_30px_rgba(16,185,129,0.2)]"
@@ -2093,7 +2067,6 @@ function DashboardContent() {
         <div
           className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/90 backdrop-blur-xl animate-in fade-in duration-200"
           onClick={(e) => {
-            // FIX #9: Allow backdrop close only when not processing
             if (e.target === e.currentTarget && paymentLifecycle !== 'PROCESSING') handleCloseModal();
           }}
         >
@@ -2109,7 +2082,11 @@ function DashboardContent() {
                     {paymentPortalMode === 'FIAT' ? 'Fiat Wire Gateway' : paymentPortalMode === 'VAULT' ? 'Vault Auto-Relayer' : 'ERC20 Routing Engine'}
                   </h3>
                   <p className="text-xs md:text-sm font-bold text-white font-mono uppercase mt-1">
-                    {Array.isArray(activeInvoice.monthly_bills) ? activeInvoice.monthly_bills[0]?.due_date : activeInvoice.monthly_bills?.due_date}
+                    {Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills.length > 0 
+                        ? activeInvoice.monthly_bills[0].due_date 
+                        : !Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills
+                            ? activeInvoice.monthly_bills.due_date
+                            : '—'}
                   </p>
                 </div>
                 <button
@@ -2175,8 +2152,6 @@ function DashboardContent() {
               </div>
             ) : (
               <div className="space-y-5 md:space-y-6">
-
-                {/* FIAT PAYMENT */}
                 {paymentPortalMode === 'FIAT' && (
                   <div className="space-y-5 md:space-y-6 animate-in fade-in zoom-in-95">
                     <div className="bg-black border border-white/10 p-6 md:p-8 text-center rounded-2xl md:rounded-3xl relative overflow-hidden">
@@ -2201,7 +2176,6 @@ function DashboardContent() {
                   </div>
                 )}
 
-                {/* USDC PAYMENT */}
                 {paymentPortalMode === 'USDC' && (
                   <div className="space-y-6 animate-in fade-in zoom-in-95">
                     <div className="bg-gradient-to-b from-blue-900/20 to-[#050505] border border-blue-500/20 p-8 text-center rounded-3xl relative overflow-hidden shadow-[0_0_40px_rgba(59,130,246,0.05)]">
@@ -2215,7 +2189,6 @@ function DashboardContent() {
                       </div>
                     </div>
 
-                    {/* Option 1: Connected Wallet */}
                     <div className="border border-white/10 bg-[#0A0A0A] p-6 space-y-5 rounded-3xl hover:border-white/20 transition-all duration-300">
                       <div className="flex items-center gap-3 mb-2">
                         <div className="w-6 h-6 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 text-[11px] font-mono font-bold border border-blue-500/20">1</div>
@@ -2249,7 +2222,6 @@ function DashboardContent() {
                       <div className="h-px bg-white/5 flex-1"></div>
                     </div>
 
-                    {/* Option 2: Manual Transfer */}
                     <div className="border border-white/5 bg-[#050505] p-6 space-y-5 rounded-3xl hover:border-white/10 transition-all duration-300">
                       <div className="flex items-center gap-3 mb-3">
                         <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-neutral-400 text-[11px] font-mono font-bold border border-white/10">2</div>
@@ -2335,7 +2307,6 @@ function DashboardContent() {
             </div>
 
             <div className="space-y-6">
-              {/* Balance Display */}
               <div className="bg-emerald-500/5 border border-emerald-500/20 p-5 rounded-2xl flex justify-between items-center">
                 <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">Available Capacity</span>
                 <span className="text-lg font-mono font-bold text-emerald-400">
@@ -2343,7 +2314,6 @@ function DashboardContent() {
                 </span>
               </div>
 
-              {/* Amount Input */}
               <div className="space-y-2">
                 <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1">Extraction Amount (USDC)</label>
                 <div className="relative">
@@ -2364,7 +2334,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Destination Address */}
               <div className="space-y-2">
                 <label className="text-[9px] font-mono text-neutral-500 uppercase tracking-widest px-1 flex justify-between">
                   <span>Destination Vector</span>
@@ -2384,7 +2353,6 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Warning + Execute */}
               <div className="pt-4">
                 <p className="text-[8px] text-neutral-500 font-mono uppercase tracking-widest leading-relaxed mb-4 text-center">
                   Warning: Ensure destination is on Base Mainnet. Funds routed to other networks are permanently lost.
@@ -2409,17 +2377,12 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* ================================================================
-          GLOBAL STYLES
-      ================================================================ */}
       <style dangerouslySetInnerHTML={{
         __html: `
           .custom-scrollbar::-webkit-scrollbar { width: 3px; }
           .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
           .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
           .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-          /* Remove number input spinners */
           input[type="number"]::-webkit-inner-spin-button,
           input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
           input[type="number"] { -moz-appearance: textfield; }
