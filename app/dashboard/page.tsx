@@ -22,6 +22,15 @@ interface Tenant {
   avatar_url?: string;
 }
 
+interface UserSession extends Tenant {
+  is_admin?: boolean;
+  user_metadata?: {
+    picture?: string;
+    avatar_url?: string;
+    full_name?: string;
+  };
+}
+
 interface MonthlyBill {
   billing_period: string;
   due_date: string;
@@ -80,7 +89,6 @@ async function safeWriteClipboard(text: string): Promise<boolean> {
   }
 }
 
-// Sanitize strings for HTML injection to prevent XSS
 function escapeHTML(str: string | undefined): string {
   if (!str) return '—';
   return str.replace(/[&<>'"]/g, 
@@ -119,7 +127,7 @@ function DashboardContent() {
   // ============================================================
   // CORE STATE
   // ============================================================
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<UserSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeWorkspace, setActiveWorkspace] = useState<'RESIDENT' | 'ADMIN' | 'ANALYTICS'>('RESIDENT');
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -132,7 +140,6 @@ function DashboardContent() {
   const [viewingReceipt, setViewingReceipt] = useState<Invoice | null>(null);
   const [allowanceInput, setAllowanceInput] = useState<string>('5');
   const [isApproving, setIsApproving] = useState(false);
-  const [localDeductions, setLocalDeductions] = useState<number>(0);
 
   const [displayLimit, setDisplayLimit] = useState(8);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -192,16 +199,13 @@ function DashboardContent() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
-  
   // ============================================================
-  // EXPORT RECEIPT (Perfect Center, Emerald Edge & Dual-Hash Logic)
+  // EXPORT RECEIPT (Hardened Document Write)
   // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
     
     const baseUrl = window.location.origin;
-    
-    // Safely extract billing period
     let rawBillingPeriod = '—';
     if (Array.isArray(receipt.monthly_bills) && receipt.monthly_bills.length > 0) {
         rawBillingPeriod = receipt.monthly_bills[0].billing_period;
@@ -213,10 +217,7 @@ function DashboardContent() {
     const methodStr = escapeHTML(receipt.payment_method) || 'FIAT';
     const amountDue = Number(receipt.amount_due).toLocaleString();
     
-    // 1. Determine routing method
     const isWeb3 = methodStr === 'USDC' || methodStr.includes('Vault');
-    
-    // 2. ENTERPRISE UI FIX: Use UUID for FIAT, actual hex hash for USDC
     const rawTxRef = isWeb3 ? (receipt.transaction_reference || '—') : receipt.id;
     const cleanTxRef = escapeHTML(rawTxRef);
     
@@ -224,7 +225,6 @@ function DashboardContent() {
         ? new Date(receipt.paid_at).toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) 
         : '—';
 
-    // 3. Determine badge styling
     const badgeColor = isWeb3 ? '#3b82f6' : '#a855f7';
     const badgeBg = isWeb3 ? 'rgba(59,130,246,0.1)' : 'rgba(168,85,247,0.1)';
     const badgeBorder = isWeb3 ? 'rgba(59,130,246,0.2)' : 'rgba(168,85,247,0.2)';
@@ -234,219 +234,48 @@ function DashboardContent() {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:;">
   <title>CompoundOS | Settlement Proof</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
-
-    @page {
-      size: A4;
-      margin: 0; 
-    }
-
+    @page { size: A4; margin: 0; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     html, body {
-      width: 210mm;
-      height: 297mm;
-      background: #ffffff !important;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-      color-adjust: exact !important;
-      font-family: 'JetBrains Mono', monospace;
-      color: #000000;
+      width: 210mm; height: 297mm; background: #ffffff !important;
+      -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
+      font-family: 'JetBrains Mono', monospace; color: #000000;
     }
-
-    .page {
-      width: 210mm;
-      height: 297mm;
-      background: #ffffff;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      position: relative;
-    }
-
-    .modal-container {
-      width: 100%;
-      max-width: 500px;
-      background: #ffffff;
-      border: 1.5px solid #10b981; 
-      box-shadow: none;
-      border-radius: 24px;
-      padding: 40px;
-      position: relative;
-    }
-
-    .header-logo-row {
-      display: flex;
-      justify-content: flex-end;
-      margin-bottom: -20px; 
-      position: relative;
-      z-index: 10;
-    }
-
-    .header-content {
-      margin-bottom: 40px;
-    }
-
-    .title-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      background-color: #10b981;
-      border-radius: 50%;
-    }
-
-    .header-title {
-      font-size: 14px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: #111827;
-    }
-
-    .header-subtitle {
-      font-size: 10px;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-top: 4px;
-    }
-
-    .value-section {
-      text-align: center;
-      margin-bottom: 40px;
-    }
-
-    .value-label {
-      font-size: 11px;
-      color: #10b981;
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-bottom: 8px;
-      display: block;
-    }
-
-    .value-amount {
-      font-size: 56px;
-      font-weight: 700;
-      color: #111827;
-      letter-spacing: -2px;
-      line-height: 1;
-    }
-
-    .data-list {
-      border-top: 1px solid rgba(16,185,129,0.1);
-      padding-top: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .data-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 14px 16px;
-      background: #f9fafb;
-      border: 1px solid #f3f4f6;
-      border-radius: 12px;
-    }
-
-    .data-label {
-      font-size: 11px;
-      color: #6b7280;
-      text-transform: uppercase;
-    }
-
-    .data-val {
-      font-size: 11px;
-      color: #111827;
-      font-weight: 700;
-    }
-
-    .route-badge {
-      font-size: 11px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 6px;
-      background: ${badgeBg};
-      color: ${badgeColor};
-      border: 1px solid ${badgeBorder};
-    }
-
-    .hash-container {
-      padding: 14px 16px;
-      background: #f9fafb;
-      border: 1px solid #f3f4f6;
-      border-radius: 12px;
-    }
-
-    .hash-label {
-      font-size: 11px;
-      color: #6b7280;
-      text-transform: uppercase;
-      display: block;
-      margin-bottom: 8px;
-    }
-
-    .hash-box {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #ffffff;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid #e5e7eb;
-      gap: 12px;
-    }
-
-    .hash-value {
-      font-size: 10px;
-      color: #10b981;
-      font-weight: 700;
-      word-break: break-all;
-    }
-
-    .basescan-link {
-      color: #3b82f6;
-      text-decoration: none;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-    }
-    
-    .basescan-link svg {
-      width: 14px;
-      height: 14px;
-    }
-
-    @media print {
-      html, body { background: #ffffff !important; }
-      .page { 
-        padding: 0;
-        margin: 0;
-      }
-      .modal-container { 
-        box-shadow: none !important;
-        border: 1.5px solid #10b981 !important;
-      }
-    }
+    .page { width: 210mm; height: 297mm; background: #ffffff; display: flex; justify-content: center; align-items: center; }
+    .modal-container { width: 100%; max-width: 500px; background: #ffffff; border: 1.5px solid #10b981; border-radius: 24px; padding: 40px; }
+    .header-logo-row { display: flex; justify-content: flex-end; margin-bottom: -20px; position: relative; z-index: 10; }
+    .header-content { margin-bottom: 40px; }
+    .title-row { display: flex; align-items: center; gap: 8px; }
+    .status-dot { width: 8px; height: 8px; background-color: #10b981; border-radius: 50%; }
+    .header-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #111827; }
+    .header-subtitle { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; }
+    .value-section { text-align: center; margin-bottom: 40px; }
+    .value-label { font-size: 11px; color: #10b981; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; display: block; }
+    .value-amount { font-size: 56px; font-weight: 700; color: #111827; letter-spacing: -2px; line-height: 1; }
+    .data-list { border-top: 1px solid rgba(16,185,129,0.1); padding-top: 24px; display: flex; flex-direction: column; gap: 12px; }
+    .data-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 12px; }
+    .data-label { font-size: 11px; color: #6b7280; text-transform: uppercase; }
+    .data-val { font-size: 11px; color: #111827; font-weight: 700; }
+    .route-badge { font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 6px; background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder}; }
+    .hash-container { padding: 14px 16px; background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 12px; }
+    .hash-label { font-size: 11px; color: #6b7280; text-transform: uppercase; display: block; margin-bottom: 8px; }
+    .hash-box { display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 10px 12px; border-radius: 8px; border: 1px solid #e5e7eb; gap: 12px; }
+    .hash-value { font-size: 10px; color: #10b981; font-weight: 700; word-break: break-all; }
+    .basescan-link { color: #3b82f6; text-decoration: none; flex-shrink: 0; display: flex; align-items: center; }
+    .basescan-link svg { width: 14px; height: 14px; }
+    @media print { .page { padding: 0; margin: 0; } .modal-container { box-shadow: none !important; border: 1.5px solid #10b981 !important; } }
   </style>
 </head>
 <body>
 <div class="page">
   <div class="modal-container">
-    
     <div class="header-logo-row">
       <img src="${baseUrl}/logo.jpg" alt="CompoundOS Logo" style="width: 48px; height: 48px; border-radius: 12px; object-fit: cover; border: 1px solid rgba(16,185,129,0.2);" onerror="this.style.display='none'" />
     </div>
-
     <div class="header-content">
       <div class="title-row">
         <div class="status-dot"></div>
@@ -454,28 +283,23 @@ function DashboardContent() {
       </div>
       <div class="header-subtitle">CompoundOS Audited Record</div>
     </div>
-
     <div class="value-section">
       <span class="value-label">Value Extinguished</span>
       <div class="value-amount">₦${amountDue}</div>
     </div>
-
     <div class="data-list">
       <div class="data-row">
         <span class="data-label">Billing Cycle</span>
         <span class="data-val">${billingPeriod}</span>
       </div>
-      
       <div class="data-row">
         <span class="data-label">Clearance Date</span>
         <span class="data-val">${clearanceDate}</span>
       </div>
-
       <div class="data-row">
         <span class="data-label">Routing Method</span>
         <span class="route-badge">${methodStr}</span>
       </div>
-
       <div class="hash-container">
         <span class="hash-label">Cryptographic Attestation Hash</span>
         <div class="hash-box">
@@ -488,18 +312,12 @@ function DashboardContent() {
         </div>
       </div>
     </div>
-
   </div>
 </div>
-
 <script>
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-      setTimeout(() => { window.print(); }, 300);
-    });
-  } else {
-    setTimeout(() => { window.print(); }, 800);
-  }
+    document.fonts.ready.then(() => { setTimeout(() => { window.print(); }, 300); });
+  } else { setTimeout(() => { window.print(); }, 800); }
   window.addEventListener('afterprint', () => { window.close(); });
 </script>
 </body>
@@ -530,6 +348,9 @@ function DashboardContent() {
   const { data: dashboardData, mutate: mutateDashboard, isValidating } = useSWR(
     user?.id ? `dashboard-${user.id}` : null,
     async () => {
+      // 🛡️ TYPE GUARD: Ensures TypeScript knows 'user' is fully loaded
+      if (!user) return { pending: [], cleared: [], allHistorical: [], roster: [], stats: { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 } };
+
       const [invoicesRes, globalLedgerRes] = await Promise.all([
         supabase
           .from('tenant_invoices')
@@ -543,9 +364,7 @@ function DashboardContent() {
       let stats = { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
 
       if (!invoicesRes.error && invoicesRes.data) {
-        // Explicitly assert the Supabase payload to match our interface
         const fetchedInvoices = invoicesRes.data as Invoice[];
-        
         pending = fetchedInvoices.filter(inv => !inv.is_paid);
         cleared = fetchedInvoices.filter(inv => inv.is_paid);
       }
@@ -588,11 +407,11 @@ function DashboardContent() {
     { revalidateOnFocus: true, keepPreviousData: true }
   );
 
-  const pendingActionInvoices = dashboardData?.pending ?? [];
-  const clearedInvoices = dashboardData?.cleared ?? [];
-  const allHistoricalInvoices = dashboardData?.allHistorical ?? [];
-  const tenantRoster = dashboardData?.roster ?? [];
-  const adminStats = dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
+  const pendingActionInvoices = useMemo(() => dashboardData?.pending ?? [], [dashboardData?.pending]);
+  const clearedInvoices = useMemo(() => dashboardData?.cleared ?? [], [dashboardData?.cleared]);
+  const allHistoricalInvoices = useMemo(() => dashboardData?.allHistorical ?? [], [dashboardData?.allHistorical]);
+  const tenantRoster = useMemo(() => dashboardData?.roster ?? [], [dashboardData?.roster]);
+  const adminStats = useMemo(() => dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 }, [dashboardData?.stats]);
 
   const verifyPaystackReturn = useCallback(async (reference: string) => {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -615,7 +434,6 @@ function DashboardContent() {
         const { data: updatedInvoice, error } = await supabase.from('tenant_invoices').update({
           is_paid: true,
           payment_method: 'FIAT',
-          // SECURITY: Store the true Paystack reference in the DB for auditing
           transaction_reference: reference, 
           paid_at: new Date().toISOString()
         }).eq('id', pendingId).select('*, monthly_bills(*)').single();
@@ -627,7 +445,6 @@ function DashboardContent() {
 
       setActiveInvoice(finalInvoice);
       setPaymentPortalMode('FIAT');
-      // AESTHETIC OVERRIDE: Force the UI to display the UUID for Fiat transactions
       setLastConfirmedTx(finalInvoice.id); 
       setPaymentLifecycle('SUCCESS');
 
@@ -682,7 +499,7 @@ function DashboardContent() {
         dbUser.avatar_url = authPhoto;
       }
 
-      const mergedUser = { ...session.user, ...dbUser };
+      const mergedUser: UserSession = { ...session.user, ...dbUser };
       setUser(mergedUser);
       if (mergedUser?.is_admin) setActiveWorkspace('ADMIN');
 
@@ -777,14 +594,14 @@ function DashboardContent() {
   }, [mutateDashboard, showToast]);
 
   const handleVerifyManualCrypto = useCallback(async () => {
-    const cleanedHash = manualTxHash.trim();
+    const cleanedHash = manualTxHash.trim() as `0x${string}`;
     if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) {
       return showToast('Invalid hash format — must be 66 char 0x-prefixed.', 'error');
     }
     setPaymentLifecycle('PROCESSING');
     try {
       if (!publicClient) throw new Error('RPC client failed to mount.');
-      const receipt = await publicClient.getTransactionReceipt({ hash: cleanedHash as `0x${string}` });
+      const receipt = await publicClient.getTransactionReceipt({ hash: cleanedHash });
       if (receipt.status !== 'success') throw new Error('Transaction reverted on-chain.');
 
       if (!activeInvoice) throw new Error('No active invoice.');
@@ -799,7 +616,7 @@ function DashboardContent() {
             validPaymentFound = true;
             break;
           }
-        } catch (_) { /* Skip non-matching logs */ }
+        } catch (_) { /* Skip non-matching logs to filter pure signal */ }
       }
 
       if (!validPaymentFound) throw new Error('No cryptographic match found in Treasury event logs.');
@@ -862,7 +679,8 @@ function DashboardContent() {
   }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, handleUpdateInvoiceRecord, showToast]);
 
   const handleInitializeFiatPayment = useCallback(async () => {
-    if (!activeInvoice) return;
+    // 🛡️ TYPE GUARD: Protects against null user session during checkout
+    if (!activeInvoice || !user) return;
     setPaymentLifecycle('PROCESSING');
     try {
       let dueStr = '';
@@ -877,7 +695,7 @@ function DashboardContent() {
       localStorage.setItem('pending_fiat_invoice', activeInvoice.id);
 
       const { data, error } = await supabase.functions.invoke('paystack-engine', {
-        body: { action: 'initialize_payment', email: user.email, amount: dueInfo.amount, invoiceId: activeInvoice.id }
+        body: { action: 'initialize_payment', email: user?.email, amount: dueInfo.amount, invoiceId: activeInvoice.id }
       });
       if (error || data?.error) throw new Error(data?.error || 'Gateway response exception');
       window.location.href = data.checkout_url;
@@ -916,9 +734,7 @@ function DashboardContent() {
         throw new Error(`Relayer denied: ${error?.message || data?.error || 'Unknown reason'}`);
       }
 
-      setLocalDeductions(prev => prev + exactUsdcDeduction);
       refetchAllowance();
-
       setLastConfirmedTx(data.txHash);
       setPaymentLifecycle('SUCCESS');
       mutateDashboard();
@@ -945,7 +761,6 @@ function DashboardContent() {
         args: [TREASURY_ADDRESS, parseUnits(allowanceInput, 6)]
       });
       showToast('Web3 Vault allowance confirmed.', 'success');
-      setLocalDeductions(0);
       refetchAllowance();
     } catch (err: any) {
       showToast(err.shortMessage || err.message, 'error');
@@ -957,6 +772,8 @@ function DashboardContent() {
 
   const isGeneratingRef = useRef(false);
   const handleGenerateBill = useCallback(async () => {
+    // 🛡️ TYPE GUARD: Prevents unauthorized generation attempts
+    if (!user) return showToast('Node session offline.', 'error');
     if (!billAmount || isNaN(Number(billAmount))) return showToast('Enter a valid amount.', 'error');
     if (isGeneratingRef.current) return;
     isGeneratingRef.current = true;
@@ -983,7 +800,7 @@ function DashboardContent() {
           active_tenant_count: activeTenants.length,
           base_split_amount: baseSplit,
           due_date: dueDate,
-          created_by: user.id
+          created_by: user?.id
         })
         .select()
         .single();
@@ -1061,7 +878,7 @@ function DashboardContent() {
   }, [router]);
 
   const handleExecuteWithdrawal = useCallback(async () => {
-    const dest = withdrawDestination.trim();
+    const dest = withdrawDestination.trim() as `0x${string}`;
     const amount = withdrawAmountInput.trim();
 
     if (!dest.startsWith('0x') || dest.length !== 42) {
@@ -1082,7 +899,7 @@ function DashboardContent() {
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
         functionName: 'routeToExternal',
-        args: [dest as `0x${string}`, cryptoAmount]
+        args: [dest, cryptoAmount]
       });
       showToast('Withdrawal executed successfully.', 'success');
       setIsWithdrawModalOpen(false);
@@ -1257,6 +1074,19 @@ function DashboardContent() {
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="14" x="2" y="5" rx="2" /><line x1="2" x2="22" y1="10" y2="10" /></svg>
             Resident Ledger
           </button>
+
+          {/* User Custom Component: Direct Node Oracle Gateway */}
+          <div className="mt-auto border-t border-white/[0.04] pt-4">
+            <a 
+              href="https://t.me/Lithos_eth" 
+              target="_blank" 
+              rel="noreferrer" 
+              className="flex items-center gap-3 px-4 py-3.5 rounded-xl text-[10px] font-mono uppercase tracking-wider text-neutral-500 hover:text-blue-400 hover:bg-blue-500/10 transition-all duration-300 group"
+            >
+              <svg className="w-4 h-4 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+              Contact Support Oracle
+            </a>
+          </div>
         </div>
 
         <div className="p-4 border-t border-white/[0.04]">
@@ -1319,7 +1149,8 @@ function DashboardContent() {
         <header className="hidden md:flex justify-between items-center px-10 py-5 border-b border-white/[0.04] bg-black/50 backdrop-blur-xl sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
-            <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">System Operational • Latency 12ms</span>
+            {/* INJECTED PHILOSOPHY: Signal over Noise telemetry text */}
+            <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">System Operational • Signal Focus • Latency 12ms</span>
           </div>
 
           <div className="flex items-center gap-6">
@@ -1737,7 +1568,7 @@ function DashboardContent() {
                       <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
                       <span className="text-[9px] font-mono font-bold text-blue-400 uppercase tracking-widest">L2 Base Protocol Vault</span>
                     </div>
-                    <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">Autonomous Allowances</h3>
+                    <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">Trustless Immutability</h3>
                     <p className="text-[11px] md:text-xs text-neutral-400 font-mono leading-relaxed max-w-xl">
                       Authorize USDC for zero-click network deductions. Avoid signing multiple MetaMask transactions. You maintain 100% cryptographic control of this limit.
                     </p>
@@ -2008,7 +1839,6 @@ function DashboardContent() {
                 <span className="text-neutral-500 uppercase block mb-2">Cryptographic Attestation Hash</span>
                 <div className="flex items-center justify-between gap-3 bg-[#000] p-2 rounded-lg border border-white/5">
                   <span className="text-emerald-400 text-[9px] truncate select-all">
-                    {/* ENTERPRISE UI FIX: Render UUID for FIAT, Hex Hash for Web3 */}
                     {viewingReceipt.payment_method === 'FIAT' ? viewingReceipt.id : (viewingReceipt.transaction_reference || '—')}
                   </span>
                   {(viewingReceipt.payment_method === 'USDC' || viewingReceipt.payment_method?.includes('Vault')) && viewingReceipt.transaction_reference?.startsWith('0x') && (
