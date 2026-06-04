@@ -21,14 +21,17 @@ const config = getDefaultConfig({
 
 export function Providers({ children }: { children: React.ReactNode }) {
   // 2. Enterprise Standard: Initialize QueryClient inside useState.
-  // This guarantees each user gets their own isolated cache instance, 
-  // preventing cross-request data leakage in Next.js SSR.
   const [queryClient] = useState(() => new QueryClient());
 
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider 
+          // 🛡️ INJECTED APP INFO FOR TRUSTED UI
+          appInfo={{
+            appName: 'CompoundOS',
+            learnMoreUrl: 'https://compoundos-node.vercel.app',
+          }}
           theme={darkTheme({
             accentColor: '#3b82f6', 
             accentColorForeground: 'white',
