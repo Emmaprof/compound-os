@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../lib/supabase';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useWriteContract, useSwitchChain, usePublicClient, useReadContract } from 'wagmi';
-import { decodeEventLog, getAddress, parseUnits, keccak256, stringToHex } from 'viem';
+import { decodeEventLog, getAddress, parseUnits, formatUnits, keccak256, stringToHex } from 'viem';
 import { base } from 'viem/chains';
 import useSWR from 'swr';
 
@@ -645,6 +645,20 @@ function DashboardContent() {
       const cryptoValue = parseUnits((dueInfo.amount / ngnToUsdRate).toFixed(6), 6);
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
+      // 🛡️ SECURITY LAYER 1: PRE-FLIGHT BALANCE CHECK
+      // Prevent the wallet from even opening if the user is broke.
+      const currentBalance = await publicClient.readContract({
+        address: USDC_CONTRACT_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [userAddress as `0x${string}`]
+      });
+
+      if (currentBalance < cryptoValue) {
+        throw new Error(`Insufficient funds. You need ${formatUnits(cryptoValue, 6)} USDC.`);
+      }
+
+      // 🛡️ SECURITY LAYER 2: ALLOWANCE CHECK
       const currentAllowance = await publicClient.readContract({
         address: USDC_CONTRACT_ADDRESS,
         abi: ERC20_ABI,
@@ -664,6 +678,7 @@ function DashboardContent() {
         showToast('Approval confirmed. Executing settlement...', 'success');
       }
 
+      // Broadcast settlement transaction
       const txHash = await writeContractAsync({
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
@@ -671,7 +686,19 @@ function DashboardContent() {
         args: [invoiceHash, cryptoValue]
       });
 
+      showToast('Awaiting on-chain finality...', 'info');
+
+      // 🛡️ SECURITY LAYER 3: ENFORCE CRYPTOGRAPHIC FINALITY
+      // Do NOT update the database until the blockchain mathematically proves the tx succeeded.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      if (receipt.status !== 'success') {
+        throw new Error('Transaction reverted by the network. Database sync aborted.');
+      }
+
+      // Only now is it mathematically safe to update the ledger
       await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', txHash);
+      
     } catch (err: any) {
       showToast(err.shortMessage || err.message, 'error');
       setPaymentLifecycle('IDLE');
