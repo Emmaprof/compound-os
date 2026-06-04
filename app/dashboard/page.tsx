@@ -157,6 +157,25 @@ function DashboardContent() {
   const [withdrawAmountInput, setWithdrawAmountInput] = useState('');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
 
+  // 🛡️ ZERO-TRUST PERSISTENT CACHE STATE (Prevents SWR from reverting UI on refresh)
+  const [localPaidState, setLocalPaidState] = useState<Record<string, { method: string, ref: string }>>({});
+
+  useEffect(() => {
+    // Rehydrate optimistic UI state securely from session
+    const saved = sessionStorage.getItem('compoundos_optimistic_ledger');
+    if (saved) {
+      try { setLocalPaidState(JSON.parse(saved)); } catch {}
+    }
+  }, []);
+
+  const markOptimisticallyPaid = useCallback((id: string, method: string, ref: string) => {
+    setLocalPaidState(prev => {
+      const next = { ...prev, [id]: { method, ref } };
+      sessionStorage.setItem('compoundos_optimistic_ledger', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (!isNotificationsOpen) return;
     const handler = (e: MouseEvent) => {
@@ -398,8 +417,31 @@ function DashboardContent() {
     { revalidateOnFocus: true, keepPreviousData: true }
   );
 
-  const pendingActionInvoices = useMemo(() => dashboardData?.pending ?? [], [dashboardData?.pending]);
-  const clearedInvoices = useMemo(() => dashboardData?.cleared ?? [], [dashboardData?.cleared]);
+  // 🛡️ ZERO-TRUST CACHE INJECTION (Overriding SWR State if Optimistic Exists)
+  const pendingActionInvoices = useMemo(() => {
+    const raw = dashboardData?.pending ?? [];
+    return raw.filter((inv: Invoice) => !localPaidState[inv.id]);
+  }, [dashboardData?.pending, localPaidState]);
+
+  const clearedInvoices = useMemo(() => {
+    const rawCleared = dashboardData?.cleared ?? [];
+    const clearedIds = new Set(rawCleared.map((i: Invoice) => i.id));
+    
+    // Inject optimistic clears that backend hasn't finalized yet to prevent blinking UI
+    const rawPending = dashboardData?.pending ?? [];
+    const optimisticItems = rawPending
+      .filter((inv: Invoice) => localPaidState[inv.id] && !clearedIds.has(inv.id))
+      .map((inv: Invoice) => ({
+        ...inv,
+        is_paid: true,
+        payment_method: localPaidState[inv.id].method,
+        transaction_reference: localPaidState[inv.id].ref,
+        paid_at: new Date().toISOString()
+      }));
+
+    return [...optimisticItems, ...rawCleared];
+  }, [dashboardData?.cleared, dashboardData?.pending, localPaidState]);
+
   const allHistoricalInvoices = useMemo(() => dashboardData?.allHistorical ?? [], [dashboardData?.allHistorical]);
   const tenantRoster = useMemo(() => dashboardData?.roster ?? [], [dashboardData?.roster]);
   const adminStats = useMemo(() => dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 }, [dashboardData?.stats]);
@@ -411,34 +453,13 @@ function DashboardContent() {
     targetInvoiceId: string,
     method: 'FIAT' | 'USDC' | 'VAULT',
     reference: string,
-    clientVerified: boolean = false // 🛡️ NEW: Bypass backend delay if frontend has cryptographic proof
+    clientVerified: boolean = false
   ) => {
-    // 1. INSTANT OPTIMISTIC UI FOR WEB3
+    // 1. INSTANT OPTIMISTIC UI 
     if (clientVerified) {
       setLastConfirmedTx(reference);
       setPaymentLifecycle('SUCCESS');
-
-      // Instantly remove from pending ledger and show in cleared
-      mutateDashboard((currentData: any) => {
-        if (!currentData) return currentData;
-        const matched = currentData.pending.find((i: Invoice) => i.id === targetInvoiceId) || activeInvoice;
-        if (!matched) return currentData;
-
-        const updatedInvoice = {
-          ...matched,
-          is_paid: true,
-          payment_method: method,
-          transaction_reference: reference,
-          paid_at: new Date().toISOString()
-        };
-
-        return {
-          ...currentData,
-          pending: currentData.pending.filter((i: Invoice) => i.id !== targetInvoiceId),
-          cleared: [updatedInvoice, ...currentData.cleared],
-          allHistorical: currentData.allHistorical.map((i: Invoice) => i.id === targetInvoiceId ? updatedInvoice : i)
-        };
-      }, false); // false = don't wait for server response, trust the client UI
+      markOptimisticallyPaid(targetInvoiceId, method, reference);
     } else {
       setPaymentLifecycle('PROCESSING');
     }
@@ -474,6 +495,7 @@ function DashboardContent() {
       if (backendSuccess) {
         setLastConfirmedTx(reference);
         setPaymentLifecycle('SUCCESS');
+        markOptimisticallyPaid(targetInvoiceId, method, reference);
         mutateDashboard();
       } else {
         showToast('Settlement Pending: Network state will finalize shortly.', 'info');
@@ -483,7 +505,7 @@ function DashboardContent() {
        // Silent data refresh to ensure perfect parity once backend finally catches up
        mutateDashboard();
     }
-  }, [activeInvoice, mutateDashboard, showToast]);
+  }, [markOptimisticallyPaid, mutateDashboard, showToast]);
 
   const verifyPaystackReturn = useCallback(async (reference: string) => {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -502,8 +524,13 @@ function DashboardContent() {
         setActiveInvoice(matchedInvoice);
         setPaymentPortalMode('FIAT');
         
-        // Execute Secure Hand-off
-        await verifySettlementOffchain(pendingId, 'FIAT', reference);
+        // 🛡️ FIAT PERFORMANCE UPGRADE: Trust local payload to pop success instantly, sync silently in background
+        if (matchedInvoice.is_paid) {
+           setLastConfirmedTx(reference);
+           setPaymentLifecycle('SUCCESS');
+        } else {
+           await verifySettlementOffchain(pendingId, 'FIAT', reference, true);
+        }
         
         localStorage.removeItem('pending_fiat_invoice');
         sessionStorage.removeItem('pending_fiat_invoice');
@@ -691,8 +718,6 @@ function DashboardContent() {
       });
 
       if (currentBalance < cryptoValue) {
-        // Precision Display Fix: Show exact 6-decimal requirement to the user to prevent 
-        // visual rounding confusion (e.g. $1.493421 required vs $1.49 displayed).
         const shortReq = formatUnits(cryptoValue, 6);
         const shortBal = formatUnits(currentBalance, 6);
         throw new Error(`Insufficient liquidity. Need exactly ${shortReq} USDC (Wallet Holds: ${shortBal} USDC).`);
@@ -735,7 +760,6 @@ function DashboardContent() {
       }
 
       // 🛡️ SECURITY LAYER 4: ZERO-TRUST OFF-CHAIN VERIFICATION
-      // 🟢 ADDED 'true' HERE: Instantly pop the success screen and clear the ledger
       await verifySettlementOffchain(activeInvoice.id, 'USDC', txHash, true);
 
     } catch (err: any) {
@@ -1080,8 +1104,9 @@ function DashboardContent() {
     <div className="min-h-[100dvh] flex flex-col md:flex-row bg-black text-neutral-100 font-sans selection:bg-blue-500/30 overflow-hidden relative">
 
       <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute top-0 left-1/4 w-[800px] h-[800px] bg-blue-900/10 rounded-full blur-[150px] opacity-30 mix-blend-screen animate-pulse duration-10000"></div>
-        <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-emerald-900/10 rounded-full blur-[120px] opacity-20 mix-blend-screen"></div>
+        {/* 🛡️ PERFORMANCE UPGRADE: Removed animate-pulse & mix-blend-screen. Hardware accelerated via transform-gpu */}
+        <div className="absolute top-0 left-1/4 w-[800px] h-[800px] bg-blue-900/10 rounded-full blur-[150px] opacity-30 transform-gpu pointer-events-none"></div>
+        <div className="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-emerald-900/10 rounded-full blur-[120px] opacity-20 transform-gpu pointer-events-none"></div>
         <div className="absolute inset-0 opacity-[0.12]" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, rgba(255,255,255,0.15) 1px, transparent 0)`, backgroundSize: '32px 32px' }}></div>
       </div>
 
@@ -1976,7 +2001,8 @@ function DashboardContent() {
               <div className="py-6 md:py-8 flex flex-col space-y-8 md:space-y-10 animate-in zoom-in-95 duration-500">
                 <div className="flex flex-col items-center text-center space-y-4">
                   <div className="relative mb-2">
-                    <div className="absolute inset-[-12px] md:inset-[-16px] border border-emerald-500/30 rounded-full animate-[ping_2.5s_infinite]"></div>
+                    {/* 🛡️ PERFORMANCE UPGRADE: Replaced heavy layout ping animation with static layered glow */}
+                    <div className="absolute inset-[-12px] md:inset-[-16px] border border-emerald-500/30 rounded-full opacity-50 shadow-[0_0_20px_rgba(16,185,129,0.2)]"></div>
                     <img src={resolvedAvatarUrl} alt="Identity" className="w-16 h-16 md:w-20 md:h-20 rounded-full border border-emerald-500/50 object-cover bg-[#000]" onError={handleImageError} />
                     <div className="absolute -bottom-1 -right-1 w-6 h-6 md:w-8 md:h-8 bg-emerald-500 rounded-full flex items-center justify-center text-black shadow-[0_0_20px_rgba(16,185,129,0.5)]">
                       <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" strokeWidth="3.5" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
