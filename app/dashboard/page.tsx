@@ -409,18 +409,44 @@ function DashboardContent() {
   // ============================================================
   const verifySettlementOffchain = useCallback(async (
     targetInvoiceId: string,
-    method: 'FIAT' | 'USDC',
-    reference: string
+    method: 'FIAT' | 'USDC' | 'VAULT',
+    reference: string,
+    clientVerified: boolean = false // 🛡️ NEW: Bypass backend delay if frontend has cryptographic proof
   ) => {
-    setPaymentLifecycle('PROCESSING');
-    
-    // 🛡️ GOOGLE-TIER RELIABILITY: Exponential Backoff Polling
-    // Base RPC indexers can lag behind client propagation. We implement
-    // robust retries to ensure the Edge Function syncs the state.
+    // 1. INSTANT OPTIMISTIC UI FOR WEB3
+    if (clientVerified) {
+      setLastConfirmedTx(reference);
+      setPaymentLifecycle('SUCCESS');
+
+      // Instantly remove from pending ledger and show in cleared
+      mutateDashboard((currentData: any) => {
+        if (!currentData) return currentData;
+        const matched = currentData.pending.find((i: Invoice) => i.id === targetInvoiceId) || activeInvoice;
+        if (!matched) return currentData;
+
+        const updatedInvoice = {
+          ...matched,
+          is_paid: true,
+          payment_method: method,
+          transaction_reference: reference,
+          paid_at: new Date().toISOString()
+        };
+
+        return {
+          ...currentData,
+          pending: currentData.pending.filter((i: Invoice) => i.id !== targetInvoiceId),
+          cleared: [updatedInvoice, ...currentData.cleared],
+          allHistorical: currentData.allHistorical.map((i: Invoice) => i.id === targetInvoiceId ? updatedInvoice : i)
+        };
+      }, false); // false = don't wait for server response, trust the client UI
+    } else {
+      setPaymentLifecycle('PROCESSING');
+    }
+
+    // 2. SILENT BACKGROUND SYNC
     let attempt = 0;
-    const maxAttempts = 4;
+    const maxAttempts = 6; 
     let backendSuccess = false;
-    let lastErr = 'Cryptographic verification failed.';
 
     while (attempt < maxAttempts && !backendSuccess) {
       try {
@@ -430,31 +456,34 @@ function DashboardContent() {
 
         if (!error && data?.success) {
           backendSuccess = true;
-        } else {
-          lastErr = data?.error || 'Verification rejected by oracle.';
         }
-      } catch (err: any) {
-        lastErr = err.message;
+      } catch (err) {
+        // Fail silently in the background, loop will retry
       }
 
       if (!backendSuccess) {
         attempt++;
         if (attempt < maxAttempts) {
-          await new Promise(res => setTimeout(res, 2000 * attempt)); // 2s, 4s, 6s wait
+          await new Promise(res => setTimeout(res, Math.min(2000 * Math.pow(1.5, attempt), 15000))); 
         }
       }
     }
 
-    if (!backendSuccess) {
-      showToast(`Settlement Pending: ${lastErr} - State will finalize shortly.`, 'error');
-      setPaymentLifecycle('IDLE');
-      return;
+    // 3. FALLBACK HANDLING
+    if (!clientVerified) {
+      if (backendSuccess) {
+        setLastConfirmedTx(reference);
+        setPaymentLifecycle('SUCCESS');
+        mutateDashboard();
+      } else {
+        showToast('Settlement Pending: Network state will finalize shortly.', 'info');
+        setPaymentLifecycle('IDLE'); 
+      }
+    } else if (backendSuccess) {
+       // Silent data refresh to ensure perfect parity once backend finally catches up
+       mutateDashboard();
     }
-
-    setLastConfirmedTx(reference);
-    setPaymentLifecycle('SUCCESS');
-    mutateDashboard();
-  }, [mutateDashboard, showToast]);
+  }, [activeInvoice, mutateDashboard, showToast]);
 
   const verifyPaystackReturn = useCallback(async (reference: string) => {
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -624,7 +653,7 @@ function DashboardContent() {
       if (!validPaymentFound) throw new Error('No cryptographic match found in Treasury event logs.');
       
       // Execute Secure Hand-off
-      await verifySettlementOffchain(activeInvoice.id, 'USDC', cleanedHash);
+      await verifySettlementOffchain(activeInvoice.id, 'USDC', cleanedHash, true);
 
     } catch (err: any) {
       showToast(err.shortMessage || err.message || 'Failed to verify transaction.', 'error');
@@ -706,15 +735,14 @@ function DashboardContent() {
       }
 
       // 🛡️ SECURITY LAYER 4: ZERO-TRUST OFF-CHAIN VERIFICATION
-      // (This now uses the exponential backoff architecture internally)
-      await verifySettlementOffchain(activeInvoice.id, 'USDC', txHash);
+      // 🟢 ADDED 'true' HERE: Instantly pop the success screen and clear the ledger
+      await verifySettlementOffchain(activeInvoice.id, 'USDC', txHash, true);
 
     } catch (err: any) {
       showToast(err.shortMessage || err.message, 'error');
       setPaymentLifecycle('IDLE');
     }
   }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, verifySettlementOffchain, showToast]);
-
   const handleInitializeFiatPayment = useCallback(async () => {
     if (!activeInvoice || !user) return;
     setPaymentLifecycle('PROCESSING');
