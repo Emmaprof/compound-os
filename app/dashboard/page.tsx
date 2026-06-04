@@ -102,12 +102,71 @@ function escapeHTML(str: string | undefined): string {
   );
 }
 
+// ============================================================
+// POLYMARKET/LIMITLESS GRADE WALLET CONNECTION UI
+// ============================================================
+function CustomConnectButton() {
+  return (
+    <ConnectButton.Custom>
+      {({ account, chain, openAccountModal, openChainModal, openConnectModal, authenticationStatus, mounted }) => {
+        const ready = mounted && authenticationStatus !== 'loading';
+        const connected = ready && account && chain && (!authenticationStatus || authenticationStatus === 'authenticated');
+
+        if (!ready) {
+          return (
+            <div aria-hidden="true" className="opacity-0 pointer-events-none select-none">
+              <button>Connect Wallet</button>
+            </div>
+          );
+        }
+
+        if (!connected) {
+          return (
+            <button onClick={openConnectModal} className="bg-blue-600 hover:bg-blue-500 text-white font-mono text-[10px] md:text-xs font-bold uppercase tracking-widest py-2 md:py-2.5 px-4 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)] flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+              Connect Wallet
+            </button>
+          );
+        }
+
+        if (chain.unsupported) {
+          return (
+            <button onClick={openChainModal} className="bg-red-500 hover:bg-red-400 text-white font-mono text-[10px] md:text-xs font-bold uppercase tracking-widest py-2 md:py-2.5 px-4 rounded-xl transition-all shadow-[0_0_20px_rgba(239,68,68,0.3)] flex items-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+              Wrong Network
+            </button>
+          );
+        }
+
+        return (
+          <div className="flex items-center gap-1.5 bg-[#050A1A] border border-blue-500/20 rounded-xl p-1 shadow-[0_0_15px_rgba(37,99,235,0.1)]">
+            <button onClick={openChainModal} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 rounded-lg transition-colors text-white font-mono text-[10px] md:text-[11px] font-bold">
+              {chain.hasIcon && (
+                <div style={{ background: chain.iconBackground, width: 16, height: 16, borderRadius: 999, overflow: 'hidden' }}>
+                  {chain.iconUrl && <img alt={chain.name ?? 'Chain icon'} src={chain.iconUrl} style={{ width: 16, height: 16 }} />}
+                </div>
+              )}
+              <span className="hidden md:block tracking-widest uppercase">{chain.name}</span>
+            </button>
+            <div className="w-px h-4 bg-white/10"></div>
+            <button onClick={openAccountModal} className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/5 rounded-lg transition-colors text-white font-mono text-[10px] md:text-[11px] font-bold tracking-widest uppercase">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
+              {account.displayName}
+            </button>
+          </div>
+        );
+      }}
+    </ConnectButton.Custom>
+  );
+}
+
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { address: userAddress, isConnected, chainId } = useAccount();
-  const { writeContractAsync } = useWriteContract();
+  const { writeContractAsync } = useSwitchChain();
   const { switchChainAsync } = useSwitchChain();
+  const writeContract = useWriteContract();
   const publicClient = usePublicClient();
 
   useEffect(() => {
@@ -442,9 +501,22 @@ function DashboardContent() {
     return [...optimisticItems, ...rawCleared];
   }, [dashboardData?.cleared, dashboardData?.pending, localPaidState]);
 
+  // 🛡️ LIVE CYCLE FIX: Inject optimistic data directly into admin stats calculation
+  const adminStats = useMemo(() => {
+    const baseStats = dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 };
+    const rawPending = dashboardData?.pending ?? [];
+    // Count how many pending items exist in the optimistic cache
+    const optimisticCount = rawPending.filter((inv: Invoice) => localPaidState[inv.id]).length;
+    
+    return {
+        ...baseStats,
+        // Prevent count from exceeding total by capping it mathematically
+        currentCyclePaid: Math.min(baseStats.currentCycleTotal, baseStats.currentCyclePaid + optimisticCount)
+    };
+  }, [dashboardData?.stats, dashboardData?.pending, localPaidState]);
+
   const allHistoricalInvoices = useMemo(() => dashboardData?.allHistorical ?? [], [dashboardData?.allHistorical]);
   const tenantRoster = useMemo(() => dashboardData?.roster ?? [], [dashboardData?.roster]);
-  const adminStats = useMemo(() => dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 }, [dashboardData?.stats]);
 
   // ============================================================
   // CORE SECURITY GATEWAY (Zero-Trust Ledger Update)
@@ -460,6 +532,8 @@ function DashboardContent() {
       setLastConfirmedTx(reference);
       setPaymentLifecycle('SUCCESS');
       markOptimisticallyPaid(targetInvoiceId, method, reference);
+      // Immediately reflect UI state change for cycle tracking
+      mutateDashboard(); 
     } else {
       setPaymentLifecycle('PROCESSING');
     }
@@ -490,7 +564,22 @@ function DashboardContent() {
       }
     }
 
-    // 3. FALLBACK HANDLING
+    // 3. FALLBACK HANDLING: If Edge function completely failed but we have cryptographic proof from client
+    if (clientVerified && !backendSuccess) {
+        try {
+            // Direct RPC fallback to force the True state on the DB
+            await supabase.from('tenant_invoices').update({
+                is_paid: true,
+                payment_method: method,
+                transaction_reference: reference,
+                paid_at: new Date().toISOString()
+            }).eq('id', targetInvoiceId);
+            mutateDashboard();
+        } catch (e) {
+            console.error("Direct RPC Fallback Error:", e);
+        }
+    }
+
     if (!clientVerified) {
       if (backendSuccess) {
         setLastConfirmedTx(reference);
@@ -733,7 +822,7 @@ function DashboardContent() {
 
       if (currentAllowance < cryptoValue) {
         showToast('Authorizing Treasury Access...', 'info');
-        const approveHash = await writeContractAsync({
+        const approveHash = await writeContract.writeContractAsync({
           address: USDC_CONTRACT_ADDRESS,
           abi: ERC20_ABI,
           functionName: 'approve',
@@ -744,7 +833,7 @@ function DashboardContent() {
       }
 
       // 🛡️ CLEAR SIGNING INITIATION
-      const txHash = await writeContractAsync({
+      const txHash = await writeContract.writeContractAsync({
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
         functionName: 'payInvoice',
@@ -766,7 +855,8 @@ function DashboardContent() {
       showToast(err.shortMessage || err.message, 'error');
       setPaymentLifecycle('IDLE');
     }
-  }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, verifySettlementOffchain, showToast]);
+  }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContract, verifySettlementOffchain, showToast]);
+
   const handleInitializeFiatPayment = useCallback(async () => {
     if (!activeInvoice || !user) return;
     setPaymentLifecycle('PROCESSING');
@@ -842,7 +932,7 @@ function DashboardContent() {
     setIsApproving(true);
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
-      await writeContractAsync({
+      await writeContract.writeContractAsync({
         address: USDC_CONTRACT_ADDRESS,
         abi: ERC20_ABI,
         functionName: 'approve',
@@ -856,7 +946,7 @@ function DashboardContent() {
       setIsApproving(false);
       setAllowanceInput('');
     }
-  }, [allowanceInput, chainId, switchChainAsync, writeContractAsync, refetchAllowance, showToast]);
+  }, [allowanceInput, chainId, switchChainAsync, writeContract, refetchAllowance, showToast]);
 
   const isGeneratingRef = useRef(false);
   const handleGenerateBill = useCallback(async () => {
@@ -982,7 +1072,7 @@ function DashboardContent() {
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
       const cryptoAmount = parseUnits(amount, 6);
-      await writeContractAsync({
+      await writeContract.writeContractAsync({
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
         functionName: 'routeToExternal',
@@ -997,7 +1087,7 @@ function DashboardContent() {
     } finally {
       setIsWithdrawing(false);
     }
-  }, [withdrawDestination, withdrawAmountInput, treasuryBalance, chainId, switchChainAsync, writeContractAsync, showToast]);
+  }, [withdrawDestination, withdrawAmountInput, treasuryBalance, chainId, switchChainAsync, writeContract, showToast]);
 
   const analytics = useMemo(() => {
     if (!allHistoricalInvoices || allHistoricalInvoices.length === 0) {
@@ -1200,7 +1290,7 @@ function DashboardContent() {
             <h1 className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-white via-neutral-200 to-neutral-500 tracking-tight">CompoundOS</h1>
           </div>
           <div className="flex items-center gap-2">
-            <ConnectButton chainStatus={{ smallScreen: 'icon', largeScreen: 'full' }} accountStatus={{ smallScreen: 'avatar', largeScreen: 'full' }} showBalance={false} />
+            <CustomConnectButton />
             <button onClick={handleSignOut} className="text-neutral-500 hover:text-red-400 p-2 bg-white/[0.02] border border-white/10 rounded-xl transition-colors" title="Sign Out">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
             </button>
@@ -1287,7 +1377,7 @@ function DashboardContent() {
                 </div>
               )}
             </div>
-            <ConnectButton chainStatus={{ smallScreen: 'full', largeScreen: 'full' }} accountStatus={{ smallScreen: 'full', largeScreen: 'full' }} showBalance={false} />
+            <CustomConnectButton />
           </div>
         </header>
 
@@ -1708,7 +1798,7 @@ function DashboardContent() {
                         </>
                       ) : (
                         <div className="w-full flex justify-center py-1 [&>div]:w-full [&_button]:w-full">
-                          <ConnectButton label="Connect to Initialize Vault" />
+                          <CustomConnectButton />
                         </div>
                       )}
                     </div>
@@ -2105,7 +2195,7 @@ function DashboardContent() {
                         </button>
                       ) : (
                         <div className="flex justify-center w-full [&>div]:w-full [&_button]:w-full">
-                          <ConnectButton label="Connect Wallet" />
+                          <CustomConnectButton />
                         </div>
                       )}
                     </div>
