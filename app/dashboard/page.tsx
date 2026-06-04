@@ -12,7 +12,7 @@ import useSWR from 'swr';
 import { TREASURY_ADDRESS, TREASURY_ABI } from '../../lib/web3/contractABI';
 
 // ============================================================
-// STRICT TYPE DEFINITIONS (Google Security Standard)
+// STRICT TYPE DEFINITIONS
 // ============================================================
 interface Tenant {
   id: string;
@@ -142,7 +142,6 @@ function DashboardContent() {
   const [isApproving, setIsApproving] = useState(false);
 
   const [displayLimit, setDisplayLimit] = useState(8);
-  const observerRef = useRef<IntersectionObserver | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -190,18 +189,12 @@ function DashboardContent() {
   });
   const treasuryBalance = treasuryBalanceRaw ? Number(treasuryBalanceRaw) / 1_000_000 : 0;
 
-  // ============================================================
-  // TOAST SYSTEM
-  // ============================================================
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now();
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
-  // ============================================================
-  // EXPORT RECEIPT (Hardened Document Write)
-  // ============================================================
   const handleExportReceiptPDF = useCallback((receipt: Invoice) => {
     if (!receipt) return;
     
@@ -234,7 +227,6 @@ function DashboardContent() {
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https:;">
   <title>CompoundOS | Settlement Proof</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap');
@@ -348,7 +340,6 @@ function DashboardContent() {
   const { data: dashboardData, mutate: mutateDashboard, isValidating } = useSWR(
     user?.id ? `dashboard-${user.id}` : null,
     async () => {
-      // 🛡️ TYPE GUARD: Ensures TypeScript knows 'user' is fully loaded
       if (!user) return { pending: [], cleared: [], allHistorical: [], roster: [], stats: { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 } };
 
       const [invoicesRes, globalLedgerRes] = await Promise.all([
@@ -413,6 +404,32 @@ function DashboardContent() {
   const tenantRoster = useMemo(() => dashboardData?.roster ?? [], [dashboardData?.roster]);
   const adminStats = useMemo(() => dashboardData?.stats ?? { activeNodes: 0, currentCyclePaid: 0, currentCycleTotal: 0 }, [dashboardData?.stats]);
 
+  // ============================================================
+  // CORE SECURITY GATEWAY (Zero-Trust Ledger Update)
+  // ============================================================
+  const verifySettlementOffchain = useCallback(async (
+    targetInvoiceId: string,
+    method: 'FIAT' | 'USDC',
+    reference: string
+  ) => {
+    setPaymentLifecycle('PROCESSING');
+    
+    // The backend Edge Function MUST query the Base RPC or Paystack API independently
+    const { data, error } = await supabase.functions.invoke('verify-settlement', {
+      body: { invoiceId: targetInvoiceId, method, reference }
+    });
+
+    if (error || !data?.success) {
+      showToast(data?.error || 'Settlement rejected: Cryptographic verification failed.', 'error');
+      setPaymentLifecycle('IDLE');
+      return;
+    }
+
+    setLastConfirmedTx(reference);
+    setPaymentLifecycle('SUCCESS');
+    mutateDashboard();
+  }, [mutateDashboard, showToast]);
+
   const verifyPaystackReturn = useCallback(async (reference: string) => {
     window.history.replaceState({}, document.title, window.location.pathname);
     
@@ -426,35 +443,20 @@ function DashboardContent() {
         .eq('id', pendingId)
         .single();
 
-      if (!matchedInvoice) return;
-
-      let finalInvoice = matchedInvoice;
-
-      if (!matchedInvoice.is_paid) {
-        const { data: updatedInvoice, error } = await supabase.from('tenant_invoices').update({
-          is_paid: true,
-          payment_method: 'FIAT',
-          transaction_reference: reference, 
-          paid_at: new Date().toISOString()
-        }).eq('id', pendingId).select('*, monthly_bills(*)').single();
-
-        if (!error && updatedInvoice) {
-          finalInvoice = updatedInvoice;
-        }
+      if (matchedInvoice) {
+        setActiveInvoice(matchedInvoice);
+        setPaymentPortalMode('FIAT');
+        
+        // Execute Secure Hand-off
+        await verifySettlementOffchain(pendingId, 'FIAT', reference);
+        
+        localStorage.removeItem('pending_fiat_invoice');
+        sessionStorage.removeItem('pending_fiat_invoice');
       }
-
-      setActiveInvoice(finalInvoice);
-      setPaymentPortalMode('FIAT');
-      setLastConfirmedTx(finalInvoice.id); 
-      setPaymentLifecycle('SUCCESS');
-
-      localStorage.removeItem('pending_fiat_invoice');
     } catch (err) {
       console.error('State Recovery Error:', err);
-    } finally {
-      mutateDashboard();
     }
-  }, [mutateDashboard]);
+  }, [verifySettlementOffchain]);
 
   useEffect(() => {
     let cancelled = false;
@@ -567,32 +569,6 @@ function DashboardContent() {
     setPaymentLifecycle('IDLE');
   }, []);
 
-  const handleUpdateInvoiceRecord = useCallback(async (
-    targetInvoiceId: string,
-    method: 'FIAT' | 'USDC',
-    reference: string
-  ) => {
-    const { error } = await supabase.from('tenant_invoices').update({
-      is_paid: true,
-      payment_method: method,
-      transaction_reference: reference,
-      paid_at: new Date().toISOString()
-    }).eq('id', targetInvoiceId);
-
-    if (!error) {
-      setLastConfirmedTx(reference);
-      setPaymentLifecycle('SUCCESS');
-      mutateDashboard();
-    } else {
-      if (error.code === '23505') {
-        showToast('SECURITY LOCK: This transaction hash has already been claimed.', 'error');
-      } else {
-        showToast('Database rejected state verification.', 'error');
-      }
-      setPaymentLifecycle('IDLE');
-    }
-  }, [mutateDashboard, showToast]);
-
   const handleVerifyManualCrypto = useCallback(async () => {
     const cleanedHash = manualTxHash.trim() as `0x${string}`;
     if (!cleanedHash.startsWith('0x') || cleanedHash.length !== 66) {
@@ -620,33 +596,36 @@ function DashboardContent() {
       }
 
       if (!validPaymentFound) throw new Error('No cryptographic match found in Treasury event logs.');
-      await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', cleanedHash);
+      
+      // Execute Secure Hand-off
+      await verifySettlementOffchain(activeInvoice.id, 'USDC', cleanedHash);
+
     } catch (err: any) {
       showToast(err.shortMessage || err.message || 'Failed to verify transaction.', 'error');
       setPaymentLifecycle('IDLE');
     }
-  }, [manualTxHash, activeInvoice, publicClient, handleUpdateInvoiceRecord, showToast]);
+  }, [manualTxHash, activeInvoice, publicClient, verifySettlementOffchain, showToast]);
 
   const handlePayWithConnectedWallet = useCallback(async () => {
-    if (!activeInvoice) return;
+    if (!activeInvoice || !userAddress) return;
     setPaymentLifecycle('PROCESSING');
+
     try {
       if (chainId !== TARGET_CHAIN_ID) await switchChainAsync({ chainId: TARGET_CHAIN_ID });
       if (!publicClient) throw new Error('RPC interface offline.');
 
       let dueStr = '';
       if (Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills.length > 0) {
-          dueStr = activeInvoice.monthly_bills[0].due_date;
+        dueStr = activeInvoice.monthly_bills[0].due_date;
       } else if (!Array.isArray(activeInvoice.monthly_bills) && activeInvoice.monthly_bills) {
-          dueStr = activeInvoice.monthly_bills.due_date;
+        dueStr = activeInvoice.monthly_bills.due_date;
       }
 
       const dueInfo = calculateDynamicAmount(activeInvoice.amount_due, dueStr);
       const cryptoValue = parseUnits((dueInfo.amount / ngnToUsdRate).toFixed(6), 6);
       const invoiceHash = keccak256(stringToHex(activeInvoice.id));
 
-      // 🛡️ SECURITY LAYER 1: PRE-FLIGHT BALANCE CHECK
-      // Prevent the wallet from even opening if the user is broke.
+      // 🛡️ SECURITY LAYER 1: STRICT BALANCE CHECK (Stops Wallet Prompt)
       const currentBalance = await publicClient.readContract({
         address: USDC_CONTRACT_ADDRESS,
         abi: ERC20_ABI,
@@ -655,7 +634,7 @@ function DashboardContent() {
       });
 
       if (currentBalance < cryptoValue) {
-        throw new Error(`Insufficient funds. You need ${formatUnits(cryptoValue, 6)} USDC.`);
+        throw new Error(`Insufficient liquidity. Required: ${formatUnits(cryptoValue, 6)} USDC.`);
       }
 
       // 🛡️ SECURITY LAYER 2: ALLOWANCE CHECK
@@ -667,7 +646,7 @@ function DashboardContent() {
       });
 
       if (currentAllowance < cryptoValue) {
-        showToast('Step 1/2: Approving Treasury access...', 'info');
+        showToast('Authorizing Treasury Access...', 'info');
         const approveHash = await writeContractAsync({
           address: USDC_CONTRACT_ADDRESS,
           abi: ERC20_ABI,
@@ -675,10 +654,11 @@ function DashboardContent() {
           args: [TREASURY_ADDRESS, cryptoValue]
         });
         await publicClient.waitForTransactionReceipt({ hash: approveHash });
-        showToast('Approval confirmed. Executing settlement...', 'success');
+        showToast('Authorization confirmed. Routing settlement...', 'success');
       }
 
-      // Broadcast settlement transaction
+      // 🛡️ ENHANCEMENT: Clear Signing. By passing exact contract ABI via wagmi,
+      // Wallets automatically format payload readable, disabling blind-signing necessity.
       const txHash = await writeContractAsync({
         address: TREASURY_ADDRESS,
         abi: TREASURY_ABI,
@@ -686,27 +666,25 @@ function DashboardContent() {
         args: [invoiceHash, cryptoValue]
       });
 
-      showToast('Awaiting on-chain finality...', 'info');
+      showToast('Awaiting Base L2 finality...', 'info');
 
-      // 🛡️ SECURITY LAYER 3: ENFORCE CRYPTOGRAPHIC FINALITY
-      // Do NOT update the database until the blockchain mathematically proves the tx succeeded.
+      // 🛡️ SECURITY LAYER 3: ENFORCE CRYPTOGRAPHIC FINALITY ON CLIENT
       const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-
       if (receipt.status !== 'success') {
-        throw new Error('Transaction reverted by the network. Database sync aborted.');
+        throw new Error('Transaction reverted on-chain. Database sync mathematically aborted.');
       }
 
-      // Only now is it mathematically safe to update the ledger
-      await handleUpdateInvoiceRecord(activeInvoice.id, 'USDC', txHash);
-      
+      // 🛡️ SECURITY LAYER 4: ZERO-TRUST OFF-CHAIN VERIFICATION
+      // Pass the execution context to the secure backend; let the server verify the state.
+      await verifySettlementOffchain(activeInvoice.id, 'USDC', txHash);
+
     } catch (err: any) {
       showToast(err.shortMessage || err.message, 'error');
       setPaymentLifecycle('IDLE');
     }
-  }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, handleUpdateInvoiceRecord, showToast]);
+  }, [activeInvoice, chainId, userAddress, publicClient, ngnToUsdRate, calculateDynamicAmount, switchChainAsync, writeContractAsync, verifySettlementOffchain, showToast]);
 
   const handleInitializeFiatPayment = useCallback(async () => {
-    // 🛡️ TYPE GUARD: Protects against null user session during checkout
     if (!activeInvoice || !user) return;
     setPaymentLifecycle('PROCESSING');
     try {
@@ -799,7 +777,6 @@ function DashboardContent() {
 
   const isGeneratingRef = useRef(false);
   const handleGenerateBill = useCallback(async () => {
-    // 🛡️ TYPE GUARD: Prevents unauthorized generation attempts
     if (!user) return showToast('Node session offline.', 'error');
     if (!billAmount || isNaN(Number(billAmount))) return showToast('Enter a valid amount.', 'error');
     if (isGeneratingRef.current) return;
@@ -1102,7 +1079,6 @@ function DashboardContent() {
             Resident Ledger
           </button>
 
-          {/* User Custom Component: Direct Node Oracle Gateway */}
           <div className="mt-auto border-t border-white/[0.04] pt-4">
             <a 
               href="https://t.me/Lithos_eth" 
@@ -1176,7 +1152,6 @@ function DashboardContent() {
         <header className="hidden md:flex justify-between items-center px-10 py-5 border-b border-white/[0.04] bg-black/50 backdrop-blur-xl sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
-            {/* INJECTED PHILOSOPHY: Signal over Noise telemetry text */}
             <span className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest">System Operational • Signal Focus • Latency 12ms</span>
           </div>
 
@@ -1597,7 +1572,7 @@ function DashboardContent() {
                     </div>
                     <h3 className="text-xl md:text-2xl font-bold text-white tracking-tight">Trustless Immutability</h3>
                     <p className="text-[11px] md:text-xs text-neutral-400 font-mono leading-relaxed max-w-xl">
-                      Authorize USDC for zero-click network deductions. Avoid signing multiple MetaMask transactions. You maintain 100% cryptographic control of this limit.
+                      Authorizing USDC requires precise payload parsing directly on your hardware layer to execute automatic network deductions. Blind signing has been strictly prohibited across this network infrastructure.
                     </p>
                   </div>
 
